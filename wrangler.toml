@@ -1,0 +1,12 @@
+name = "epay-pages"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "epay-db"
+database_id = "e94480f1-7f1e-4a60-8ce1-573073e0e85a"
+
+[vars]
+SITE_NAME = "Epay Pages"

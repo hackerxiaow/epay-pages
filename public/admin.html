@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>支付管理中心</title>
+  <link href="/assets/css/bootstrap.min.css" rel="stylesheet"/>
+  <link href="/assets/vendor/font-awesome/css/font-awesome.min.css" rel="stylesheet"/>
+  <style>
+    body{padding-top:60px;background:#f5f5f5;font-family:"Microsoft YaHei",-apple-system,sans-serif}
+    .navbar-default{background-color:#337ab7;border-color:#2e6da4}
+    .navbar-default .navbar-brand,.navbar-default .navbar-nav>li>a{color:#fff}
+    .navbar-default .navbar-nav>.active>a,.navbar-default .navbar-nav>.active>a:focus,.navbar-default .navbar-nav>.active>a:hover{color:#337ab7;background-color:#fff}
+    .navbar-default .navbar-nav>li>a:focus,.navbar-default .navbar-nav>li>a:hover{color:#dff0ff}
+    .navbar-default .navbar-toggle .icon-bar{background-color:#fff}
+    .panel{box-shadow:0 1px 3px rgba(0,0,0,.06);border:none}
+    .stat-num{font-size:26px;font-weight:700;color:#337ab7}
+    .table td,.table th{vertical-align:middle!important;font-size:13px}
+    .login-box{max-width:380px;margin:80px auto}
+    .status-0{color:#f0ad4e}.status-1{color:#5cb85c}.status-2{color:#d9534f}.status-3{color:#5bc0de}
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-fixed-top navbar-default" id="topnav" style="display:none">
+  <div class="container">
+    <div class="navbar-header">
+      <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar">
+        <span class="icon-bar"></span><span class="icon-bar"></span><span class="icon-bar"></span>
+      </button>
+      <a class="navbar-brand" href="#home"><i class="fa fa-shield"></i> 支付管理中心</a>
+    </div>
+    <div id="navbar" class="collapse navbar-collapse">
+      <ul class="nav navbar-nav">
+        <li><a href="#home"><i class="fa fa-home"></i> 平台首页</a></li>
+        <li><a href="#orders"><i class="fa fa-list"></i> 收款订单</a></li>
+        <li><a href="#channels"><i class="fa fa-plug"></i> 支付渠道</a></li>
+        <li><a href="#users"><i class="fa fa-user"></i> 商户管理</a></li>
+        <li><a href="#settles"><i class="fa fa-cloud"></i> 结算管理</a></li>
+        <li><a href="#setting"><i class="fa fa-cog"></i> 系统设置</a></li>
+      </ul>
+      <ul class="nav navbar-nav navbar-right">
+        <li><a href="javascript:logout()"><i class="fa fa-power-off"></i> 退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<!-- 登录 -->
+<div class="container login-box" id="loginview" style="display:none">
+  <div class="panel panel-primary">
+    <div class="panel-heading"><i class="fa fa-shield"></i> 管理员登录</div>
+    <div class="panel-body">
+      <div class="form-group"><input id="luser" class="form-control" placeholder="管理员账号"></div>
+      <div class="form-group"><input id="lpwd" type="password" class="form-control" placeholder="密码"></div>
+      <button class="btn btn-primary btn-block" onclick="login()"><i class="fa fa-sign-in"></i> 登录</button>
+      <p id="lmsg" class="text-danger" style="margin-top:10px"></p>
+    </div>
+  </div>
+</div>
+
+<div class="container" id="mainview" style="display:none;padding-bottom:40px">
+  <!-- 首页 -->
+  <div id="page-home" class="page">
+    <div class="row" id="stats"></div>
+  </div>
+
+  <!-- 订单 -->
+  <div id="page-orders" class="page" style="display:none">
+    <div class="panel panel-default">
+      <div class="panel-heading clearfix">
+        <form class="form-inline" style="margin:0" onsubmit="return loadOrders(1,true)">
+          <select id="o-status" class="form-control input-sm">
+            <option value="">全部状态</option><option value="0">待支付</option><option value="1">已支付</option>
+            <option value="2">已退款</option><option value="3">已完成</option>
+          </select>
+          <input id="o-q" class="form-control input-sm" placeholder="订单号/商户ID">
+          <button class="btn btn-primary btn-sm"><i class="fa fa-search"></i> 查询</button>
+        </form>
+      </div>
+      <div class="table-responsive"><table class="table table-striped table-hover">
+        <thead><tr><th>平台订单号</th><th>商户订单号</th><th>商户</th><th>类型</th><th>名称</th><th>金额</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
+        <tbody id="o-list"></tbody>
+      </table></div>
+      <div class="panel-footer" id="o-pager"></div>
+    </div>
+  </div>
+
+  <!-- 渠道 -->
+  <div id="page-channels" class="page" style="display:none">
+    <div class="panel panel-default">
+      <div class="panel-heading"><button class="btn btn-success btn-xs pull-right" onclick="editChannel(0)"><i class="fa fa-plus"></i> 添加渠道</button>支付渠道</div>
+      <div class="table-responsive"><table class="table table-striped">
+        <thead><tr><th>ID</th><th>名称</th><th>插件</th><th>支持</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="c-list"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <!-- 商户 -->
+  <div id="page-users" class="page" style="display:none">
+    <div class="panel panel-default">
+      <div class="panel-heading"><button class="btn btn-success btn-xs pull-right" onclick="editUser(0)"><i class="fa fa-plus"></i> 添加商户</button>商户列表</div>
+      <div class="table-responsive"><table class="table table-striped">
+        <thead><tr><th>UID</th><th>用户名</th><th>商户密钥</th><th>余额</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="u-list"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <!-- 结算 -->
+  <div id="page-settles" class="page" style="display:none">
+    <div class="panel panel-default">
+      <div class="panel-heading">结算申请</div>
+      <div class="table-responsive"><table class="table table-striped">
+        <thead><tr><th>ID</th><th>商户</th><th>金额</th><th>时间</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="s-list"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <!-- 设置 -->
+  <div id="page-setting" class="page" style="display:none">
+    <div class="panel panel-default"><div class="panel-heading">系统设置</div>
+      <div class="panel-body">
+        <div class="form-group"><label>站点名称</label><input id="cfg-sitename" class="form-control"></div>
+        <div class="form-group"><label>开放商户注册 (1开/0关)</label><input id="cfg-reg_open" class="form-control"></div>
+        <div class="form-group"><label>类型→渠道ID 映射 (JSON, 如 {"alipay":1,"wxpay":1,"usdt":2})</label><textarea id="cfg-channel_map" class="form-control" rows="3"></textarea></div>
+        <div class="form-group"><label>通知重试 Token (cron 用)</label><input id="cfg-cron_token" class="form-control"></div>
+        <button class="btn btn-primary" onclick="saveConfig()">保存设置</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 弹窗 -->
+<div class="modal fade" id="modal"><div class="modal-dialog"><div class="modal-content" id="modal-content"></div></div></div>
+
+<script src="/assets/vendor/jquery/3.4.1/jquery.min.js"></script>
+<script src="/assets/vendor/twitter-bootstrap/3.4.1/js/bootstrap.min.js"></script>
+<script>
+function api(url, opt){ return fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opt)).then(r=>r.json()); }
+const STATUS = {0:'<span class="status-0">待支付</span>',1:'<span class="status-1">已支付</span>',2:'<span class="status-2">已退款</span>',3:'<span class="status-3">已完成</span>'};
+
+async function checkLogin(){
+  const r = await api('/admin/api/islogin');
+  if(r.login){ $('#topnav,#mainview').show(); $('#loginview').hide(); route(); }
+  else { $('#topnav,#mainview').hide(); $('#loginview').show(); }
+}
+async function login(){
+  const r = await api('/admin/api/login',{method:'POST',body:JSON.stringify({username:$('#luser').val(),password:$('#lpwd').val()})});
+  if(r.code===0){ checkLogin(); } else { $('#lmsg').text(r.msg); }
+}
+function logout(){ api('/admin/api/logout',{method:'POST'}).then(checkLogin); }
+
+async function route(){
+  const h = location.hash.replace('#','') || 'home';
+  $('.page').hide(); $('#page-'+h.split('?')[0]).show();
+  $('#navbar').removeClass('in');
+  if(h==='home') loadHome();
+  if(h.startsWith('orders')) loadOrders(1);
+  if(h==='channels') loadChannels();
+  if(h==='users') loadUsers();
+  if(h==='settles') loadSettles();
+  if(h==='setting') loadConfig();
+}
+window.addEventListener('hashchange', route);
+
+async function loadHome(){
+  const r = await api('/admin/api/info');
+  const d = r.data;
+  $('#stats').html([
+    ['今日订单',d.orders_today],['今日收款','¥'+(d.money_today/100).toFixed(2)],
+    ['待支付订单',d.pending],['商户总数',d.users],['订单总数',d.orders_all],['待处理结算',d.settles_pending]
+  ].map(x=>`<div class="col-md-4"><div class="panel panel-default"><div class="panel-body text-center"><div class="stat-num">${x[1]}</div><div class="text-muted">${x[0]}</div></div></div></div>`).join(''));
+}
+async function loadOrders(page, fromForm){
+  if(fromForm) location.hash = '#orders';
+  const st = $('#o-status').val(), q = $('#o-q').val();
+  const r = await api(`/admin/api/orders?page=${page}&status=${st}&q=${encodeURIComponent(q)}`);
+  $('#o-list').html(r.data.list.map(o=>`<tr>
+    <td>${o.trade_no}</td><td>${o.out_trade_no||''}</td><td>${o.uid}</td><td>${o.type}</td><td>${o.name||''}</td>
+    <td>¥${(o.money/100).toFixed(2)}</td><td>${STATUS[o.status]||o.status}</td>
+    <td>${o.addtime?new Date(o.addtime*1000).toLocaleString():''}</td>
+    <td>${o.status===1?`<button class="btn btn-danger btn-xs" onclick="refund('${o.trade_no}')">退款</button>`:''}</td></tr>`).join(''));
+  $('#o-pager').html(`<ul class="pagination" style="margin:0">
+    <li class="${page<=1?'disabled':''}"><a href="javascript:loadOrders(${Math.max(1,page-1)})">上一页</a></li>
+    <li><a>共 ${r.data.total} 条</a></li>
+    <li><a href="javascript:loadOrders(${page+1})">下一页</a></li></ul>`);
+}
+async function refund(tradeNo){
+  if(!confirm('确认退款 '+tradeNo+' ？')) return;
+  const r = await api('/admin/api/orders/refund',{method:'POST',body:JSON.stringify({trade_no:tradeNo})});
+  alert(r.msg||r.code); loadOrders(1);
+}
+let PLUGINS = [];
+async function loadChannels(){
+  const r = await api('/admin/api/channels');
+  PLUGINS = r.data.plugins;
+  $('#c-list').html(r.data.list.map(c=>`<tr>
+    <td>${c.id}</td><td>${c.name}</td><td><code>${c.plugin}</code></td><td>${JSON.parse(c.types||'[]').join(', ')}</td>
+    <td>${c.status===1?'<span class="status-1">启用</span>':'<span class="status-2">停用</span>'}</td>
+    <td><button class="btn btn-primary btn-xs" onclick="editChannel(${c.id})">编辑</button>
+        <button class="btn btn-danger btn-xs" onclick="delChannel(${c.id})">删除</button></td></tr>`).join(''));
+}
+function editChannel(id){
+  const p = PLUGINS.reduce((a,b)=>a, null);
+  const c = id?CHANNELS_CACHE.find(x=>x.id===id):null;
+  const plugin = c?PLUGINS.find(x=>x.id===c.plugin):PLUGINS[0];
+  const cfg = c?JSON.parse(c.config||'{}'):{};
+  $('#modal-content').html(`<div class="modal-header"><h4 class="modal-title">${id?'编辑':'添加'}渠道</h4></div>
+  <div class="modal-body">
+    <div class="form-group"><label>插件类型</label><select id="ch-plugin" class="form-control" ${id?'disabled':''}>
+      ${PLUGINS.map(pl=>`<option value="${pl.id}" ${c&&c.plugin===pl.id?'selected':''}>${pl.name} (${pl.id})</option>`).join('')}</select></div>
+    <div class="form-group"><label>渠道名称</label><input id="ch-name" class="form-control" value="${c?c.name:''}"></div>
+    <div class="form-group"><label>状态</label><select id="ch-status" class="form-control">
+      <option value="1" ${!c||c.status===1?'selected':''}>启用</option><option value="0" ${c&&c.status===0?'selected':''}>停用</option></select></div>
+    ${plugin?plugin.inputs.map(i=>`<div class="form-group"><label>${i.label}${i.required?' *':''}</label><input class="form-control ch-cfg" data-k="${i.name}" value="${cfg[i.name]||''}"></div>`).join(''):''}
+  </div>
+  <div class="modal-footer"><button class="btn btn-default" data-dismiss="modal">取消</button>
+  <button class="btn btn-primary" onclick="saveChannel(${id})">保存</button></div>`);
+  $('#modal').modal('show');
+}
+let CHANNELS_CACHE = [];
+async function loadChannelsCache(){ const r = await api('/admin/api/channels'); CHANNELS_CACHE = r.data.list; }
+const _origLoadChannels = loadChannels;
+loadChannels = async function(){ await loadChannelsCache(); _origLoadChannels(); };
+async function saveChannel(id){
+  const config = {};
+  $('.ch-cfg').each(function(){ config[$(this).data('k')] = $(this).val(); });
+  const plugin = $('#ch-plugin').val();
+  const pl = PLUGINS.find(x=>x.id===plugin);
+  const r = await api('/admin/api/channels',{method:'POST',body:JSON.stringify({
+    id:id||undefined, plugin, name:$('#ch-name').val(), status:parseInt($('#ch-status').val()),
+    config, types:pl?pl.types:[]
+  })});
+  if(r.code===0){ $('#modal').modal('hide'); loadChannels(); } else alert(r.msg);
+}
+async function delChannel(id){ if(!confirm('确认删除渠道 '+id+'？'))return;
+  await api('/admin/api/channels/delete',{method:'POST',body:JSON.stringify({id})}); loadChannels(); }
+async function loadUsers(){
+  const r = await api('/admin/api/users');
+  $('#u-list').html(r.data.list.map(u=>`<tr>
+    <td>${u.uid}</td><td>${u.username}</td><td><code style="font-size:11px">${u.key}</code></td>
+    <td>¥${(u.money/100).toFixed(2)}</td>
+    <td>${u.status===1?'<span class="status-1">正常</span>':'<span class="status-2">禁用</span>'}</td>
+    <td><button class="btn btn-primary btn-xs" onclick="editUser(${u.uid},'${u.username}',${u.money},${u.status})">编辑</button>
+        <button class="btn btn-danger btn-xs" onclick="delUser(${u.uid})">删除</button></td></tr>`).join(''));
+}
+function editUser(uid, username, money, status){
+  $('#modal-content').html(`<div class="modal-header"><h4 class="modal-title">${uid?'编辑商户 '+username:'添加商户'}</h4></div>
+  <div class="modal-body">
+    ${uid?'':`<div class="form-group"><label>用户名</label><input id="us-name" class="form-control"></div>`}
+    <div class="form-group"><label>${uid?'重置密码(留空不改)':'密码'}</label><input id="us-pwd" class="form-control"></div>
+    ${uid?`<div class="form-group"><label>余额(元)</label><input id="us-money" class="form-control" value="${(money/100).toFixed(2)}"></div>
+    <div class="form-group"><label>状态</label><select id="us-status" class="form-control">
+      <option value="1" ${status===1?'selected':''}>正常</option><option value="0" ${status===0?'selected':''}>禁用</option></select></div>`:''}
+  </div>
+  <div class="modal-footer"><button class="btn btn-default" data-dismiss="modal">取消</button>
+  <button class="btn btn-primary" onclick="saveUser(${uid})">保存</button></div>`);
+  $('#modal').modal('show');
+}
+async function saveUser(uid){
+  const body = uid?{uid,password:$('#us-pwd').val()||undefined,money:parseFloat($('#us-money').val()||'0'),status:parseInt($('#us-status').val())}
+    :{username:$('#us-name').val(),password:$('#us-pwd').val()};
+  const r = await api('/admin/api/users',{method:'POST',body:JSON.stringify(body)});
+  if(r.code===0){ $('#modal').modal('hide'); loadUsers(); } else alert(r.msg);
+}
+async function delUser(uid){ if(!confirm('确认删除商户 '+uid+'？'))return;
+  await api('/admin/api/users/delete',{method:'POST',body:JSON.stringify({uid})}); loadUsers(); }
+async function loadSettles(){
+  const r = await api('/admin/api/settles');
+  $('#s-list').html(r.data.map(s=>`<tr><td>${s.id}</td><td>${s.username||s.uid}</td><td>¥${(s.amount/100).toFixed(2)}</td>
+    <td>${new Date(s.addtime*1000).toLocaleString()}</td>
+    <td>${s.status===0?'<span class="status-0">待处理</span>':s.status===1?'<span class="status-1">已打款</span>':'<span class="status-2">已驳回</span>'}</td>
+    <td>${s.status===0?`<button class="btn btn-success btn-xs" onclick="review(${s.id},1)">通过</button>
+    <button class="btn btn-warning btn-xs" onclick="review(${s.id},2)">驳回</button>`:''}</td></tr>`).join(''));
+}
+async function review(id, status){
+  await api('/admin/api/settles/review',{method:'POST',body:JSON.stringify({id,status})}); loadSettles();
+}
+async function loadConfig(){
+  const r = await api('/admin/api/config');
+  $('#cfg-sitename').val(r.data.sitename||''); $('#cfg-reg_open').val(r.data.reg_open||'0');
+  $('#cfg-channel_map').val(r.data.channel_map||'{}'); $('#cfg-cron_token').val(r.data.cron_token||'');
+}
+async function saveConfig(){
+  const r = await api('/admin/api/config',{method:'POST',body:JSON.stringify({
+    sitename:$('#cfg-sitename').val(), reg_open:$('#cfg-reg_open').val(),
+    channel_map:$('#cfg-channel_map').val(), cron_token:$('#cfg-cron_token').val()})});
+  alert(r.code===0?'已保存':r.msg);
+}
+checkLogin();
+</script>
+</body>
+</html>

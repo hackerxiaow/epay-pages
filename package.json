@@ -1,0 +1,30 @@
+{
+  "name": "epay-pages",
+  "version": "1.0.0",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "node test/e2e.mjs",
+    "build": "node scripts/build.mjs",
+    "dev": "wrangler dev --port 8787"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "blueimp-md5": "^2.19.0",
+    "hono": "^4.13.9",
+    "qrcode-generator": "^2.0.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260927.1",
+    "@types/blueimp-md5": "^2.18.2",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.141.0"
+  },
+  "type": "module"
+}

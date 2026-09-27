@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>商户管理中心</title>
+  <link href="/assets/css/bootstrap.min.css" rel="stylesheet"/>
+  <link href="/assets/vendor/font-awesome/css/font-awesome.min.css" rel="stylesheet"/>
+  <style>
+    body{padding-top:60px;background:#f5f5f5;font-family:"Microsoft YaHei",-apple-system,sans-serif}
+    .navbar-default{background-color:#5cb85c;border-color:#4cae4c}
+    .navbar-default .navbar-brand,.navbar-default .navbar-nav>li>a{color:#fff}
+    .navbar-default .navbar-nav>.active>a,.navbar-default .navbar-nav>.active>a:focus,.navbar-default .navbar-nav>.active>a:hover{color:#5cb85c;background-color:#fff}
+    .navbar-default .navbar-nav>li>a:focus,.navbar-default .navbar-nav>li>a:hover{color:#e2ffe2}
+    .navbar-default .navbar-toggle .icon-bar{background-color:#fff}
+    .panel{box-shadow:0 1px 3px rgba(0,0,0,.06);border:none}
+    .stat-num{font-size:24px;font-weight:700;color:#5cb85c}
+    .table td,.table th{vertical-align:middle!important;font-size:13px}
+    .login-box{max-width:380px;margin:80px auto}
+    .status-0{color:#f0ad4e}.status-1{color:#5cb85c}.status-2{color:#d9534f}.status-3{color:#5bc0de}
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-fixed-top navbar-default" id="topnav" style="display:none">
+  <div class="container">
+    <div class="navbar-header">
+      <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar">
+        <span class="icon-bar"></span><span class="icon-bar"></span><span class="icon-bar"></span>
+      </button>
+      <a class="navbar-brand" href="#home"><i class="fa fa-users"></i> 商户管理中心</a>
+    </div>
+    <div id="navbar" class="collapse navbar-collapse">
+      <ul class="nav navbar-nav">
+        <li><a href="#home"><i class="fa fa-home"></i> 商户首页</a></li>
+        <li><a href="#orders"><i class="fa fa-list"></i> 订单管理</a></li>
+        <li><a href="#records"><i class="fa fa-rmb"></i> 收款流水</a></li>
+        <li><a href="#settle"><i class="fa fa-cloud"></i> 申请结算</a></li>
+      </ul>
+      <ul class="nav navbar-nav navbar-right">
+        <li><a href="javascript:logout()"><i class="fa fa-power-off"></i> 退出</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container login-box" id="loginview" style="display:none">
+  <div class="panel panel-success">
+    <div class="panel-heading"><i class="fa fa-users"></i> 商户登录</div>
+    <div class="panel-body">
+      <ul class="nav nav-tabs" style="margin-bottom:14px">
+        <li class="active"><a data-toggle="tab" href="#tab-login">登录</a></li>
+        <li><a data-toggle="tab" href="#tab-reg">注册</a></li>
+      </ul>
+      <div class="tab-content">
+        <div id="tab-login" class="tab-pane active">
+          <div class="form-group"><input id="luser" class="form-control" placeholder="商户账号"></div>
+          <div class="form-group"><input id="lpwd" type="password" class="form-control" placeholder="密码"></div>
+          <button class="btn btn-success btn-block" onclick="login()"><i class="fa fa-sign-in"></i> 登录</button>
+        </div>
+        <div id="tab-reg" class="tab-pane">
+          <div class="form-group"><input id="ruser" class="form-control" placeholder="商户账号(字母数字)"></div>
+          <div class="form-group"><input id="rpwd" type="password" class="form-control" placeholder="密码(≥6位)"></div>
+          <button class="btn btn-success btn-block" onclick="reg()"><i class="fa fa-user-plus"></i> 注册</button>
+        </div>
+      </div>
+      <p id="lmsg" class="text-danger" style="margin-top:10px"></p>
+    </div>
+  </div>
+</div>
+
+<div class="container" id="mainview" style="display:none;padding-bottom:40px">
+  <div id="page-home" class="page">
+    <div class="row">
+      <div class="col-md-6"><div class="panel panel-default"><div class="panel-body text-center">
+        <div class="stat-num" id="m-balance"></div><div class="text-muted">账户余额 (元)</div>
+      </div></div></div>
+      <div class="col-md-6"><div class="panel panel-default"><div class="panel-body">
+        <p><b>商户ID (pid)：</b><span id="m-uid"></span></p>
+        <p><b>商户密钥 (key)：</b><code id="m-key" style="word-break:break-all"></code></p>
+        <p class="text-muted">接入方式与彩虹易支付一致：/submit.php 提交，MD5 签名。</p>
+      </div></div></div>
+    </div>
+  </div>
+  <div id="page-orders" class="page" style="display:none">
+    <div class="panel panel-default"><div class="panel-heading">订单管理</div>
+      <div class="table-responsive"><table class="table table-striped">
+        <thead><tr><th>平台订单号</th><th>商户订单号</th><th>类型</th><th>名称</th><th>金额</th><th>状态</th><th>时间</th></tr></thead>
+        <tbody id="o-list"></tbody></table></div>
+      <div class="panel-footer"><button class="btn btn-default btn-sm" onclick="loadOrders(myPage+1)">下一页</button></div>
+    </div>
+  </div>
+  <div id="page-records" class="page" style="display:none">
+    <div class="panel panel-default"><div class="panel-heading">收款流水</div>
+      <div class="table-responsive"><table class="table table-striped">
+        <thead><tr><th>类型</th><th>金额</th><th>说明</th><th>时间</th></tr></thead>
+        <tbody id="r-list"></tbody></table></div>
+    </div>
+  </div>
+  <div id="page-settle" class="page" style="display:none">
+    <div class="panel panel-default"><div class="panel-heading">申请结算</div>
+      <div class="panel-body">
+        <div class="form-group"><label>结算金额 (元)</label><input id="st-amt" class="form-control" placeholder="不超过可用余额"></div>
+        <button class="btn btn-success" onclick="applySettle()"><i class="fa fa-cloud-upload"></i> 提交申请</button>
+        <p id="st-msg" class="text-muted" style="margin-top:10px">余额实时到账；结算申请由管理员审核打款。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/assets/vendor/jquery/3.4.1/jquery.min.js"></script>
+<script src="/assets/vendor/twitter-bootstrap/3.4.1/js/bootstrap.min.js"></script>
+<script>
+function api(url, opt){ return fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opt)).then(r=>r.json()); }
+const STATUS = {0:'<span class="status-0">待支付</span>',1:'<span class="status-1">已支付</span>',2:'<span class="status-2">已退款</span>',3:'<span class="status-3">已完成</span>'};
+let myPage = 1;
+
+async function checkLogin(){
+  const r = await api('/user/api/me');
+  if(r.code===0){ $('#topnav,#mainview').show(); $('#loginview').hide();
+    $('#m-balance').text('¥'+r.data.money); $('#m-uid').text(r.data.uid); $('#m-key').text(r.data.key);
+    route(); }
+  else { $('#topnav,#mainview').hide(); $('#loginview').show(); }
+}
+async function login(){
+  const r = await api('/user/api/login',{method:'POST',body:JSON.stringify({username:$('#luser').val(),password:$('#lpwd').val()})});
+  if(r.code===0){ checkLogin(); } else { $('#lmsg').text(r.msg); }
+}
+async function reg(){
+  const r = await api('/user/api/register',{method:'POST',body:JSON.stringify({username:$('#ruser').val(),password:$('#rpwd').val()})});
+  if(r.code===0){ checkLogin(); } else { $('#lmsg').text(r.msg); }
+}
+function logout(){ api('/user/api/logout',{method:'POST'}).then(checkLogin); }
+
+async function route(){
+  const h = location.hash.replace('#','') || 'home';
+  $('.page').hide(); $('#page-'+h).show(); $('#navbar').removeClass('in');
+  if(h==='home'){} if(h==='orders'){ myPage=1; loadOrders(1); }
+  if(h==='records') loadRecords(); if(h==='settle'){}
+}
+window.addEventListener('hashchange', route);
+
+async function loadOrders(page){
+  myPage = page;
+  const r = await api('/user/api/orders?page='+page);
+  $('#o-list').html(r.data.list.map(o=>`<tr>
+    <td>${o.trade_no}</td><td>${o.out_trade_no||''}</td><td>${o.type}</td><td>${o.name||''}</td>
+    <td>¥${(o.money/100).toFixed(2)}</td><td>${STATUS[o.status]||o.status}</td>
+    <td>${o.addtime?new Date(o.addtime*1000).toLocaleString():''}</td></tr>`).join('') || '<tr><td colspan="7" class="text-muted text-center">暂无订单</td></tr>');
+}
+async function loadRecords(){
+  const r = await api('/user/api/records');
+  const T={1:'收入',2:'退款',3:'结算',4:'调整'};
+  $('#r-list').html(r.data.map(x=>`<tr><td>${T[x.type]||x.type}</td>
+    <td class="${x.type===2||x.type===3?'text-danger':'text-success'}">${x.type===2||x.type===3?'-':'+'}¥${(x.money/100).toFixed(2)}</td>
+    <td>${x.note||''}</td><td>${new Date(x.addtime*1000).toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="4" class="text-muted text-center">暂无流水</td></tr>');
+}
+async function applySettle(){
+  const r = await api('/user/api/settle',{method:'POST',body:JSON.stringify({amount:$('#st-amt').val()})});
+  $('#st-msg').text(r.code===0?'申请已提交，等待管理员打款':r.msg);
+  if(r.code===0) checkLogin();
+}
+checkLogin();
+</script>
+</body>
+</html>
