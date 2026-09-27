@@ -4,7 +4,7 @@ import { Bindings } from '../auth';
 import { ChannelCtx, ChannelPlugin, NotifyResult } from '../channel';
 import { markOrderPaid, sendMerchantNotifySafe } from '../orderflow';
 import { OrderRow } from '../db';
-import { ensurePayAmount } from './alipaybill';
+import { ensurePayAmount } from '../billpoll';
 
 /**
  * V免签 (VMQ) 兼容协议: 挂机端 App 轮询取单 + 推送到账。
@@ -15,18 +15,26 @@ import { ensurePayAmount } from './alipaybill';
  */
 export const vmqPlugin: ChannelPlugin = {
   id: 'vmq',
-  name: 'V免签挂机(需App监听)',
-  types: ['alipay', 'wxpay'],
+  name: 'V免签挂机(多端监听:安卓/桌面/二开版)',
+  types: ['alipay', 'wxpay', 'qqpay', 'usdt'],
   inputs: [
     { name: 'key', label: '通信密钥(挂机端配置)', required: true },
     { name: 'qrcode_alipay', label: '支付宝收款码图片链接' },
     { name: 'qrcode_wxpay', label: '微信收款码图片链接' },
+    { name: 'qrcode_qqpay', label: 'QQ收款码图片链接' },
+    { name: 'qrcode_usdt', label: 'USDT钱包二维码内容/图片链接' },
     { name: 'pay_suffix', label: '尾数防撞单(1开, 默认开, 同原版金额递增)' },
   ],
 
   async createOrder(ctx: ChannelCtx) {
     const cfg = ctx.channel.config;
-    const qr = ctx.payType === 'wxpay' ? cfg.qrcode_wxpay : cfg.qrcode_alipay;
+    const qrMap: Record<string, string | undefined> = {
+      alipay: cfg.qrcode_alipay,
+      wxpay: cfg.qrcode_wxpay,
+      qqpay: cfg.qrcode_qqpay,
+      usdt: cfg.qrcode_usdt,
+    };
+    const qr = qrMap[ctx.payType] || '';
     const payAmount = await ensurePayAmount(ctx.env, ctx.order, cfg.pay_suffix !== '0');
     return { ok: true, qrContent: qr || '', payAmount };
   },
@@ -44,7 +52,7 @@ export async function vmqTask(env: Bindings, key: string, type: string): Promise
     } catch {}
   }
   if (!valid) return Response.json({ code: -1, msg: 'key错误' });
-  const typeFilter = type === 'wxpay' ? 'wxpay' : 'alipay';
+  const typeFilter = ['alipay', 'wxpay', 'qqpay', 'usdt'].includes(type) ? type : 'alipay';
   const order = await env.DB.prepare(
     "SELECT trade_no, money, ext FROM orders WHERE status=0 AND type=? AND channel IN (SELECT id FROM channels WHERE plugin='vmq') ORDER BY id ASC LIMIT 1"
   )

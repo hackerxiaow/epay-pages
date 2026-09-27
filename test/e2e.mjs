@@ -840,6 +840,67 @@ async function main() {
     j = await r.json();
     ok(j.data.money === '57.86', `余额对账 (got ${j.data.money}, expect 57.86)`);
 
+
+    console.log('\n== 23. QQ钱包账单轮询 + OneBot上报 + 首页统计 ==');
+    // QQ账单轮询渠道
+    r = await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ plugin: 'qqbill', name: 'QQ钱包轮询', config: { cookie: 'qq=1', bill_url: `http://127.0.0.1:${UPSTREAM_PORT}/finance/record.htm`, qrcode_qqpay: 'https://img.example/qq.png' } }) });
+    ok((await r.json()).code === 0, '创建QQ账单轮询渠道');
+    channelsList = (await (await fetch(BASE + '/admin/api/channels', { headers: { Cookie: adminCookie } })).json()).data.list;
+    const qqBillChId = channelsList.find((x) => x.plugin === 'qqbill').id;
+    // OneBot token
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ onebot_token: 'obtoken123', channel_map: JSON.stringify({ alipay: apiChId, wxpay: vmq2Id, qqpay: qqBillChId }) }) });
+    // QQ订单
+    const qqArgs = { ...orderArgs, type: 'qqpay', out_trade_no: 'QQPAY' + Date.now(), money: '9.13' };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...qqArgs, sign: signParams(qqArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === 1 && j.qrcode === 'https://img.example/qq.png', 'QQ渠道下单返回收款码');
+    const qqTradeNo = j.trade_no;
+    // OneBot 错误token
+    r = await fetch(BASE + '/onebot/report?token=bad', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw_message: '您收到一笔转账 9.99元' }) });
+    ok(r.status === 403, 'OneBot 错误token被拒');
+    // 不匹配金额
+    r = await fetch(BASE + '/onebot/report?token=obtoken123', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw_message: 'QQ钱包通知：您收到一笔转账，金额9.99元' }) });
+    j = await r.json();
+    ok(j.status === 'no_match', 'OneBot 金额不匹配忽略');
+    // 匹配尾数: 从收银台拿
+    r = await fetch(BASE + '/cashier/' + qqTradeNo);
+    const qqPay = ((await r.text()).match(/data-pay="([\d.]+)"/) || [])[1];
+    r = await fetch(BASE + '/onebot/report?token=obtoken123', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw_message: `QQ钱包通知：您收到一笔转账，金额${qqPay}元` }) });
+    j = await r.json();
+    ok(j.status === 'ok', 'OneBot QQ到账自动确认');
+    await waitFor(async () => {
+      const rr = await fetch(BASE + '/api/cashier/status?trade_no=' + qqTradeNo);
+      return (await rr.json()).status >= 1;
+    }, 8000);
+    await waitFor(async () => merchantNotifies.some((x) => x.params.out_trade_no === qqArgs.out_trade_no), 8000);
+    ok(merchantNotifies.some((x) => x.params.out_trade_no === qqArgs.out_trade_no), 'QQ订单商户收到通知');
+    // QQ账单轮询渠道也测一笔 (cookie源)
+    const qqArgs2 = { ...orderArgs, type: 'qqpay', out_trade_no: 'QQBILL' + Date.now(), money: '7.07' };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...qqArgs2, sign: signParams(qqArgs2, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    const qq2TradeNo = j.trade_no;
+    r = await fetch(BASE + '/cashier/' + qq2TradeNo);
+    const qq2Pay = ((await r.text()).match(/data-pay="([\d.]+)"/) || [])[1];
+    await new Promise((resolve) => {
+      const u = new URL(`http://127.0.0.1:${UPSTREAM_PORT}/setbill`);
+      const rq = http.request({ host: u.hostname, port: u.port, path: u.pathname, method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res2) => { res2.resume(); resolve(); });
+      rq.end(JSON.stringify({ amount: qq2Pay, timeStr: bj(0) }));
+    });
+    await waitFor(async () => {
+      const rr = await fetch(BASE + '/api/cashier/status?trade_no=' + qq2TradeNo);
+      return (await rr.json()).status >= 1;
+    }, 20000);
+    r = await fetch(BASE + '/api/cashier/status?trade_no=' + qq2TradeNo);
+    j = await r.json();
+    ok(j.status === 1, 'QQ钱包账单轮询自动确认 (免挂)');
+    // 公开统计与首页
+    r = await fetch(BASE + '/api/stats');
+    j = await r.json();
+    ok(j.code === 0 && j.data.merchants >= 3 && j.data.orders_all >= 10, '公开统计接口');
+    r = await fetch(BASE + '/');
+    j = await r.text();
+    ok(j.includes('三网收款') && j.includes('监控端下载') && j.includes('入驻商户'), '首页改版(仿码支付内容结构)');
+
   } catch (e) {
     fail++;
     failures.push('异常中断: ' + e.message);

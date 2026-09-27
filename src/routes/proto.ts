@@ -224,7 +224,7 @@ proto.get('/api/cashier/status', async (c) => {
   const tradeNo = c.req.query('trade_no') || '';
   const order = await loadOrder(c.env, tradeNo);
   if (!order) return c.json({ code: -1, msg: '订单不存在' });
-  const { pollAllBills } = await import('../lib/plugins/alipaybill');
+  const { pollAllBills } = await import('../lib/billpoll');
   c.executionCtx.waitUntil(pollAllBills(c.env));
   return c.json({ code: 0, status: order.status });
 });
@@ -334,8 +334,13 @@ function cashierPage(o: {
   transferUrl?: string;
 }): string {
   const isImg = /^https?:\/\/.+\.(png|jpe?g|gif|webp)(\?|$)/i.test(o.qr);
-  const typeLabel = o.type === 'wxpay' ? '微信支付' : o.type === 'usdt' ? 'USDT支付' : '支付宝';
-  const typeColor = o.type === 'wxpay' ? '#1aad19' : o.type === 'usdt' ? '#26a17b' : '#1678ff';
+  const typeMap: Record<string, [string, string]> = {
+    wxpay: ['微信支付', '#1aad19'],
+    alipay: ['支付宝', '#1678ff'],
+    qqpay: ['QQ支付', '#12b7f5'],
+    usdt: ['USDT支付', '#26a17b'],
+  };
+  const [typeLabel, typeColor] = typeMap[o.type] || [o.type, '#1678ff'];
   return `<!DOCTYPE html><html lang="zh-cn"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>${o.orderName} - 收银台</title>

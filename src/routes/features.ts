@@ -15,6 +15,26 @@ async function requireAdmin(env: Bindings, req: Request): Promise<boolean> {
   return session?.role === 'admin';
 }
 
+// 公开运营统计 (仅聚合数字, 仿码支付平台首页)
+features.get('/api/stats', async (c) => {
+  const ts = now() - 86400;
+  const [users, ordersToday, moneyToday, ordersAll] = await Promise.all([
+    c.env.DB.prepare('SELECT COUNT(*) n FROM users').first<{ n: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) n FROM orders WHERE addtime>=?').bind(ts).first<{ n: number }>(),
+    c.env.DB.prepare('SELECT IFNULL(SUM(money),0) s FROM orders WHERE status>=1 AND addtime>=?').bind(ts).first<{ s: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) n FROM orders').first<{ n: number }>(),
+  ]);
+  return c.json({
+    code: 0,
+    data: {
+      merchants: users?.n || 0,
+      orders_today: ordersToday?.n || 0,
+      money_today: (moneyToday?.s || 0) / 100,
+      orders_all: ordersAll?.n || 0,
+    },
+  });
+});
+
 // 注册配置 (公共, 供前端渲染验证码/邮箱开关)
 features.get('/api/regconfig', async (c) => {
   const conf = await getConfigAll(c.env.DB);

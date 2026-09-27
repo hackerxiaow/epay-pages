@@ -69,8 +69,9 @@ vmqCompat.all('/appPush', async (c) => {
     } catch {}
   }
   if (!channelId) return c.json({ code: -1, msg: '签名校验错误' });
-  // 原版编号: 1=微信 2=支付宝
-  const payType = type === '1' ? 'wxpay' : type === '2' ? 'alipay' : '';
+  // 原版/二开版编号: 1=微信 2=支付宝 3=QQ 4=USDT
+  const numMap: Record<string, string> = { '1': 'wxpay', '2': 'alipay', '3': 'qqpay', '4': 'usdt' };
+  const payType = numMap[type] || '';
   const cents = str2cents(price);
   if (!payType || !cents) return c.json({ code: 1, msg: '成功' });
 
