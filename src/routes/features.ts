@@ -69,21 +69,96 @@ async function verifyCaptcha(env: Bindings, id: string, answer: string): Promise
 features.get('/pay/:uid', async (c) => {
   const uid = parseInt(c.req.param('uid'), 10);
   const user = await getUserByUid(c.env.DB, uid);
-  if (!user || user.status !== 1) return c.html('<meta charset="utf-8"><body style="text-align:center;padding-top:60px;font-family:sans-serif"><h3>商户不存在</h3></body>');
+  if (!user || user.status !== 1) return c.html('<meta charset="utf-8"><body style="text-align:center;padding-top:80px;font-family:sans-serif;color:#ef4444"><h3>当前商户不存在或已被禁用</h3></body>');
   const conf = await getConfigAll(c.env.DB);
   let types: string[] = [];
   try {
     types = Object.keys(JSON.parse(conf.channel_map || '{}'));
   } catch {}
-  const sitename = conf.sitename || 'Epay';
+  if (!types.length) types = ['alipay', 'wxpay'];
+  const sitename = conf.sitename || 'Epay Pages';
+  const typeMap: Record<string, string> = {
+    alipay: '支付宝',
+    wxpay: '微信支付',
+    qqpay: 'QQ 钱包',
+    usdt: 'USDT 泰达币',
+  };
+
   return c.html(`<!DOCTYPE html><html lang="zh-cn"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${user.username} - 收款</title>
-<style>body{font-family:sans-serif;background:#f5f6f7;margin:0}.box{max-width:380px;margin:50px auto;background:#fff;border-radius:10px;padding:34px 28px;box-shadow:0 2px 12px rgba(0,0,0,.06)}.t{text-align:center;color:#337ab7;font-size:20px;font-weight:700;margin-bottom:4px}.m{text-align:center;color:#999;font-size:12px;margin-bottom:24px}input,select{width:100%;padding:12px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box;font-size:16px;margin-bottom:14px}.amt{font-size:28px;text-align:center}button{width:100%;padding:13px;border:0;border-radius:6px;background:#337ab7;color:#fff;font-size:16px;font-weight:600}</style></head><body>
-<div class="box"><div class="t">${sitename}</div><div class="m">商户：${user.username}（ID ${uid}）</div>
-<form method="get" action="/paygo/${uid}">
-<input class="amt" name="money" type="number" step="0.01" min="0.01" placeholder="输入金额" required>
-<select name="type">${types.map((t) => `<option value="${t}">${t === 'alipay' ? '支付宝' : t === 'wxpay' ? '微信支付' : t === 'usdt' ? 'USDT' : t}</option>`).join('')}</select>
-<button type="submit">立即支付</button></form></div></body></html>`);
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>向 ${user.username} 付款 - ${sitename}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px 14px}
+.pay-card{background:#ffffff;width:100%;max-width:400px;border-radius:24px;border:1px solid rgba(226,232,240,0.8);box-shadow:0 20px 40px -15px rgba(15,23,42,0.08);padding:32px 24px}
+.merchant-row{display:flex;align-items:center;gap:12px;margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid #f1f5f9}
+.avatar{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#2563eb,#38bdf8);color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700}
+.m-info{display:flex;flex-direction:column}
+.m-name{font-size:16px;font-weight:700;color:#0f172a}
+.m-id{font-size:12px;color:#64748b}
+
+.input-label{font-size:13px;font-weight:600;color:#64748b;margin-bottom:8px}
+.amount-wrap{position:relative;display:flex;align-items:center;margin-bottom:14px}
+.sym{position:absolute;left:14px;font-size:26px;font-weight:700;color:#0f172a}
+.amt-input{width:100%;height:64px;padding-left:42px;padding-right:16px;border:2px solid #e2e8f0;border-radius:14px;font-size:32px;font-weight:800;color:#0f172a;outline:none;transition:border-color .2s}
+.amt-input:focus{border-color:#2563eb}
+
+.quick-pills{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:22px}
+.pill{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 0;text-align:center;font-size:13px;font-weight:600;color:#475569;cursor:pointer;transition:all .15s}
+.pill:hover{background:#eff6ff;color:#2563eb;border-color:#bfdbfe}
+
+.type-select{width:100%;height:48px;padding:0 14px;border:1px solid #e2e8f0;border-radius:12px;font-size:14px;font-weight:600;color:#0f172a;background:#fff;margin-bottom:24px;outline:none}
+
+.btn-pay{display:block;width:100%;background:#0f172a;color:#fff;font-size:16px;font-weight:700;padding:15px;border:none;border-radius:14px;cursor:pointer;transition:all .2s;box-shadow:0 4px 14px rgba(15,23,42,0.15)}
+.btn-pay:hover{background:#1e293b;transform:translateY(-1px)}
+.btn-pay:active{transform:scale(0.98)}
+
+.foot{text-align:center;font-size:11px;color:#94a3b8;margin-top:20px}
+</style></head><body>
+
+<div class="pay-card">
+  <div class="merchant-row">
+    <div class="avatar">${user.username.slice(0, 1).toUpperCase()}</div>
+    <div class="m-info">
+      <span class="m-name">${user.username}</span>
+      <span class="m-id">商户号 #${uid} · ${sitename}</span>
+    </div>
+  </div>
+
+  <form method="get" action="/paygo/${uid}">
+    <div class="input-label">付款金额</div>
+    <div class="amount-wrap">
+      <span class="sym">¥</span>
+      <input class="amt-input" id="amtInput" name="money" type="number" step="0.01" min="0.01" placeholder="输入金额" autofocus required>
+    </div>
+
+    <div class="quick-pills">
+      <div class="pill" onclick="setAmt('5.00')">¥5</div>
+      <div class="pill" onclick="setAmt('10.00')">¥10</div>
+      <div class="pill" onclick="setAmt('20.00')">¥20</div>
+      <div class="pill" onclick="setAmt('50.00')">¥50</div>
+      <div class="pill" onclick="setAmt('100.00')">¥100</div>
+    </div>
+
+    <div class="input-label">支付方式</div>
+    <select class="type-select" name="type">
+      ${types.map((t) => `<option value="${t}">${typeMap[t] || t}</option>`).join('')}
+    </select>
+
+    <button class="btn-pay" type="submit">立即支付 →</button>
+  </form>
+
+  <div class="foot">安全加密支付 · 资金直达商户账户</div>
+</div>
+
+<script>
+function setAmt(v){
+  var el = document.getElementById('amtInput');
+  el.value = v;
+  el.focus();
+}
+</script>
+</body></html>`);
 });
 
 features.get('/paygo/:uid', async (c) => {
@@ -106,118 +181,312 @@ features.get('/paygo/:uid', async (c) => {
   return c.redirect(`/cashier/${r.tradeNo}`);
 });
 
-// ==================== 文档页 ====================
+// ==================== 文档页 (现代沉浸式开发文档) ====================
 features.get('/doc', (c) => {
-  const codeP = (body: string) => `<pre>${body.replace(/</g, '&lt;')}</pre>`;
-  return c.html(`<!DOCTYPE html><html lang="zh-cn"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>接入文档 - Epay Pages (Cloudflare 版)</title>
-<link href="/assets/css/bootstrap.min.css" rel="stylesheet"/>
+  const codeBox = (title: string, lang: string, code: string) => `
+<div class="code-box">
+  <div class="code-header">
+    <div class="code-dots"><span></span><span></span><span></span></div>
+    <span class="code-title">${title}</span>
+    <span class="code-lang">${lang}</span>
+  </div>
+  <pre><code>${code.replace(/</g, '&lt;')}</code></pre>
+</div>`;
+
+  return c.html(`<!DOCTYPE html><html lang="zh-cn"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>商户接入开发文档 - Epay Pages</title>
 <style>
-body{padding-top:60px;font-family:"Microsoft YaHei",-apple-system,sans-serif;background:#f5f6f7;color:#333}
-.navbar-default{background-color:#337ab7;border-color:#2e6da4}
-.navbar-default .navbar-brand{color:#fff}
-pre{background:#282c34;color:#abb2bf;border-radius:6px;padding:14px;font-size:12px;overflow:auto;border:none}
-table{font-size:13px} td,th{vertical-align:middle!important}
-.sec{margin-bottom:34px}
-.tip{background:#fcf8e3;border:1px solid #faebcc;border-radius:4px;padding:10px 14px;font-size:13px;color:#8a6d3b}
+:root{
+  --bg:#f8fafc;
+  --surface:#ffffff;
+  --text:#0f172a;
+  --text-muted:#64748b;
+  --border:#e2e8f0;
+  --primary:#2563eb;
+  --primary-hover:#1d4ed8;
+  --radius:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{text-decoration:none;color:var(--primary)}
+a:hover{text-decoration:underline}
+
+/* 顶部导航 */
+.nav-wrap{position:sticky;top:0;z-index:100;background:rgba(255,255,255,0.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+.nav-box{max-width:1160px;margin:0 auto;height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 20px}
+.nav-brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:700;color:var(--text);text-decoration:none}
+.nav-brand svg{width:24px;height:24px;color:var(--primary)}
+.nav-links{display:flex;align-items:center;gap:20px}
+.nav-links a{color:var(--text-muted);font-size:14px;font-weight:500}
+.nav-links a:hover{color:var(--primary);text-decoration:none}
+
+/* 布局 */
+.layout{max-width:1160px;margin:32px auto 80px;padding:0 20px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px;align-items:start}
+.sidebar{position:sticky;top:92px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 12px;display:flex;flex-direction:column;gap:4px}
+.sidebar a{font-size:13px;font-weight:500;color:var(--text-muted);padding:8px 14px;border-radius:8px;transition:all .15s}
+.sidebar a:hover{background:var(--bg);color:var(--primary);text-decoration:none}
+
+.content{display:flex;flex-direction:column;gap:36px}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:32px}
+.section h2{font-size:22px;font-weight:800;letter-spacing:-0.5px;color:var(--text);margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.section h2::before{content:"";width:4px;height:20px;background:var(--primary);border-radius:2px;display:inline-block}
+.section h3{font-size:16px;font-weight:700;margin:24px 0 10px;color:var(--text)}
+.section p{font-size:14px;color:var(--text-muted);margin-bottom:14px;line-height:1.7}
+.section ul,.section ol{margin-left:20px;margin-bottom:16px;color:var(--text-muted);font-size:14px;line-height:1.8}
+.badge-tag{background:#eff6ff;color:var(--primary);padding:3px 8px;border-radius:6px;font-size:12px;font-weight:600;font-family:monospace}
+
+/* 表格响应式容器 */
+.table-wrap{overflow-x:auto;margin:16px 0;border:1px solid var(--border);border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:13px;text-align:left}
+th{background:#f8fafc;padding:10px 14px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border)}
+td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text-muted)}
+tr:last-child td{border-bottom:none}
+
+/* macOS 代码块 */
+.code-box{border-radius:10px;overflow:hidden;background:#0f172a;margin:16px 0;border:1px solid #1e293b}
+.code-header{background:#1e293b;padding:8px 14px;display:flex;align-items:center;justify-content:space-between;color:#94a3b8;font-size:12px}
+.code-dots{display:flex;gap:6px}
+.code-dots span{width:10px;height:10px;border-radius:50%}
+.code-dots span:nth-child(1){background:#ef4444}
+.code-dots span:nth-child(2){background:#f59e0b}
+.code-dots span:nth-child(3){background:#10b981}
+.code-title{font-weight:600;color:#cbd5e1}
+.code-lang{text-transform:uppercase;font-size:10px;letter-spacing:0.5px}
+pre{padding:16px;overflow-x:auto;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12.5px;line-height:1.6}
+
+/* 响应式 */
+@media (max-width:840px){
+  .layout{grid-template-columns:1fr;gap:20px}
+  .sidebar{position:static;display:none}
+  .section{padding:20px}
+  .section h2{font-size:19px}
+}
 </style></head><body>
-<nav class="navbar navbar-fixed-top navbar-default"><div class="container">
-<div class="navbar-header"><a class="navbar-brand" href="/">Epay Pages 接入文档</a></div>
-<ul class="nav navbar-nav navbar-right"><li><a href="/user.html">商户中心</a></li><li><a href="/admin.html">管理后台</a></li></ul>
-</div></nav>
-<div class="container">
-<div class="sec"><h2>系统说明</h2>
-<p>本系统为 <b>彩虹易支付协议兼容</b> 的聚合收款网关，基于 Cloudflare Pages + D1 构建（<b>非 PHP 程序</b>，无需虚拟主机/宝塔）。
-你只需要在商户中心拿到 <code>PID</code> 与 <code>商户密钥</code>，任何支持"易支付"的程序填入三件套即可收款；自有系统可用下方任意语言直连。</p>
+
+<div class="nav-wrap">
+  <div class="nav-box">
+    <a class="nav-brand" href="/">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      <span>Epay Pages 接入文档</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">首页</a>
+      <a href="/user.html">商户中心</a>
+      <a href="/admin.html">管理后台</a>
+    </div>
+  </div>
 </div>
 
-<div class="sec"><h2>快速开始（三步）</h2>
-<ol>
-<li><b>拿凭据</b>：商户中心 <code>/user.html</code> 注册/登录 → 首页查看 商户ID(PID) 与 商户密钥(key)</li>
-<li><b>后台配通道</b>：管理员在 支付渠道 添加渠道并启用，然后在 系统设置 的"类型→渠道映射"填写，例如 <code>{"alipay":1,"wxpay":2,"qqpay":3,"usdt":4}</code>（值=渠道ID，可填多个逗号分隔做加权轮询）</li>
-<li><b>开始收款</b>：按下方任一方式对接；没有网站也可以直接用码牌收款页 <code>/pay/你的PID</code></li>
-</ol>
-<p>支付方式类型：<code>alipay</code> 支付宝 · <code>wxpay</code> 微信 · <code>qqpay</code> QQ · <code>usdt</code> USDT（以平台开放为准）</p>
+<div class="layout">
+  <div class="sidebar">
+    <a href="#about">系统与架构</a>
+    <a href="#quickstart">快速开始</a>
+    <a href="#plugin">方式A: CMS插件</a>
+    <a href="#direct">方式B: 直连API</a>
+    <a href="#notify">异步回调与验签</a>
+    <a href="#query">订单查询与退款</a>
+    <a href="#paypage">码牌收款</a>
+    <a href="#monitors">多端监控端</a>
+    <a href="#faq">常见问题</a>
+  </div>
+
+  <div class="content">
+    <div class="section" id="about">
+      <h2>系统与架构说明</h2>
+      <p>本系统为 <b>彩虹易支付协议 100% 兼容</b> 的高性能支付网关，完全运行于 Cloudflare 全球边缘网络（<b>非 PHP 程序</b>，基于 Cloudflare Pages + D1 强一致数据库），杜绝原版流传源码中的恶意后门与数据库注入漏洞。</p>
+      <p>任何支持易支付协议的商城、发卡站、会员系统填入三件套参数即可开箱即用。同时原生支持 <b>支付宝免CK官方API模式</b>、<b>V免签安卓原生App</b>、<b>桌面挂机端</b> 与 <b>OneBot 协议端</b> 接入。</p>
+    </div>
+
+    <div class="section" id="quickstart">
+      <h2>快速开始（三步接入）</h2>
+      <ol>
+        <li><b>获取商户凭据</b>：登录 <a href="/user.html">商户中心</a> 注册账号，在主页直接获取您的商户编号 <span class="badge-tag">PID</span> 与通信私钥 <span class="badge-tag">KEY</span>。</li>
+        <li><b>配置映射通道</b>：管理员在后台创建收款通道并启用，在系统设置中通过可视化下拉完成支付类型映射（如 alipay/wxpay/qqpay/usdt）。</li>
+        <li><b>接入收款</b>：将三件套参数填入网站插件即可发起收款，无需网站时也可以直接使用码牌收款。</li>
+      </ol>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>支付类型标识</th><th>中文名称</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>alipay</code></td><td>支付宝</td><td>当面付 / 个人码账单轮询 / 免CK模式</td></tr>
+            <tr><td><code>wxpay</code></td><td>微信支付</td><td>官方扫码 Native V2 / 个人码监控</td></tr>
+            <tr><td><code>qqpay</code></td><td>QQ 钱包</td><td>QQ 钱包账单轮询 / OneBot 协议端</td></tr>
+            <tr><td><code>usdt</code></td><td>USDT 泰达币</td><td>TRC20 链上地址收款</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section" id="plugin">
+      <h2>方式A：现成易支付插件接入（推荐）</h2>
+      <p>市面上 99% 的开源商城、发卡系统（如独角数卡、WordPress WooCommerce、Typecho、Z-Blog、荔枝发卡、WHMCS 等）都内置易支付插件，只需填入以下三项：</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>插件配置项</th><th>对应参数说明</th></tr></thead>
+          <tbody>
+            <tr><td><b>网关 / 接口地址</b></td><td><code>https://您的域名</code> （例如 <code>https://epay-pages.pages.dev</code>）</td></tr>
+            <tr><td><b>商户ID (PID)</b></td><td>商户中心主页显示的数字 ID（例如 <code>1</code>）</td></tr>
+            <tr><td><b>商户密钥 (KEY)</b></td><td>商户中心显示的 32 位通信私钥</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section" id="direct">
+      <h2>方式B：直连 API 接口下单</h2>
+      <p>自研系统或无插件场景，可向网关发起 HTTP 请求：</p>
+      <ul>
+        <li><b>页面跳转方式</b>：<code>GET / POST /submit.php</code>（自动 302 携带参数重定向至收银台）</li>
+        <li><b>接口返回方式</b>：<code>GET / POST /mapi.php</code>（返回 JSON 结构：含 <code>trade_no</code>, <code>payurl</code>, <code>qrcode</code>）</li>
+      </ul>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>参数名</th><th>必填</th><th>类型</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>pid</code></td><td>是</td><td>Int</td><td>商户编号</td></tr>
+            <tr><td><code>type</code></td><td>是</td><td>String</td><td>支付方式 (alipay / wxpay / qqpay / usdt)</td></tr>
+            <tr><td><code>out_trade_no</code></td><td>是</td><td>String</td><td>商户系统唯一订单号</td></tr>
+            <tr><td><code>notify_url</code></td><td>是</td><td>String</td><td>服务器异步通知完整公网 URL</td></tr>
+            <tr><td><code>return_url</code></td><td>否</td><td>String</td><td>买家支付完成后同步跳转页面</td></tr>
+            <tr><td><code>name</code></td><td>是</td><td>String</td><td>商品名称</td></tr>
+            <tr><td><code>money</code></td><td>是</td><td>Decimal</td><td>金额（元，精确到两位小数，如 10.00）</td></tr>
+            <tr><td><code>sign</code></td><td>是</td><td>String</td><td>请求数字签名</td></tr>
+            <tr><td><code>sign_type</code></td><td>是</td><td>String</td><td>固定传 <code>MD5</code>（或商户配置的 <code>RSA</code>）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>签名算法</h3>
+      <p>将所有请求参数（排除 <code>sign</code>、<code>sign_type</code> 及空值参数）按参数名 <b>ASCII 码升序排序</b>，以 <code>k=v&</code> 拼接为待签名字符串。末尾直接拼接商户 KEY 后取 32 位小写 MD5：<code>md5(待签字符串 + KEY)</code>。</p>
+
+      ${codeBox("Node.js 下单签名示例", "javascript", `const crypto = require('crypto');
+
+function buildSign(params, key) {
+  const sortedKeys = Object.keys(params)
+    .filter(k => k !== 'sign' && k !== 'sign_type' && params[k] !== '' && params[k] !== undefined)
+    .sort();
+  const queryStr = sortedKeys.map(k => k + '=' + params[k]).join('&');
+  return crypto.createHash('md5').update(queryStr + key).digest('hex');
+}
+
+// 构造下单参数
+const order = {
+  pid: '1',
+  type: 'alipay',
+  out_trade_no: 'ORDER_' + Date.now(),
+  notify_url: 'https://mysite.com/api/pay/notify',
+  return_url: 'https://mysite.com/pay/success',
+  name: '高级VIP会员月卡',
+  money: '29.90',
+};
+
+const sign = buildSign(order, '您的32位商户密钥');
+const payUrl = 'https://epay-pages.pages.dev/submit.php?' + new URLSearchParams({
+  ...order,
+  sign,
+  sign_type: 'MD5'
+}).toString();
+
+console.log('请引导用户跳转此链接支付:', payUrl);`)}
+
+      ${codeBox("Python 下单签名示例", "python", `import hashlib
+from urllib.parse import urlencode
+
+def build_sign(params, key):
+    filtered = sorted((k, v) for k, v in params.items() if k not in ('sign', 'sign_type') and v != '')
+    query_str = '&'.join(f'{k}={v}' for k, v in filtered)
+    return hashlib.md5((query_str + key).encode('utf-8')).hexdigest()
+
+params = {
+    'pid': '1',
+    'type': 'wxpay',
+    'out_trade_no': 'PY_1001',
+    'notify_url': 'https://mysite.com/notify',
+    'name': '赞助测试',
+    'money': '5.00'
+}
+params['sign'] = build_sign(params, '商户密钥')
+params['sign_type'] = 'MD5'
+print('https://epay-pages.pages.dev/submit.php?' + urlencode(params))`)}
+    </div>
+
+    <div class="section" id="notify">
+      <h2>异步回调通知与验签</h2>
+      <p>买家支付成功后，网关会以 <code>GET</code> 请求向商户预留的 <code>notify_url</code> 发送异步通知。商户验签通过后，<b>必须仅输出纯文本 <code>success</code></b>，否则系统将在 24 小时内启动重试机制（最多 5 次）。</p>
+      ${codeBox("PHP 异步通知验签处理示例", "php", `<?php
+$key = '您的商户密钥';
+$params = $_GET;
+$sign = $params['sign'];
+
+// 排序并过滤空值与签名键
+ksort($params);
+$signParts = [];
+foreach ($params as $k => $v) {
+    if ($k !== 'sign' && $k !== 'sign_type' && $v !== '') {
+        $signParts[] = "$k=$v";
+    }
+}
+$expectSign = md5(implode('&', $signParts) . $key);
+
+if ($sign === $expectSign) {
+    if ($params['trade_status'] === 'TRADE_SUCCESS') {
+        $tradeNo = $params['trade_no'];       // 平台订单号
+        $outTradeNo = $params['out_trade_no']; // 商户订单号
+        $money = $params['money'];             // 实付金额
+        
+        // 执行业务发货逻辑...
+    }
+    // 成功处理必须原样输出小写 success
+    exit('success');
+} else {
+    exit('fail');
+}`)}
+    </div>
+
+    <div class="section" id="query">
+      <h2>订单查询与退款 API</h2>
+      ${codeBox("API 兼容端点说明", "http", `# 1. 订单状态查询 (GET)
+GET /api.php?act=order&pid=商户ID&key=商户KEY&trade_no=平台订单号
+
+# 2. 订单退款 (POST 表单)
+POST /api.php?act=refundapi
+trade_no=平台订单号&money=退款金额&key=md5(trade_no+系统KEY+trade_no)`)}
+    </div>
+
+    <div class="section" id="paypage">
+      <h2>码牌收款模式（无网站场景）</h2>
+      <p>系统为每个商户提供专属静态聚合收银码牌页面：<code>https://您的域名/pay/商户ID</code>。</p>
+      <p>无需搭建独立商城，直接将此链接打印成实体收银台台卡或发给买家，买家自主输入金额并选择支付渠道即可完成支付。</p>
+    </div>
+
+    <div class="section" id="monitors">
+      <h2>多端监控生态</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>客户端</th><th>实现路径</th><th>运行环境</th></tr></thead>
+          <tbody>
+            <tr><td><b>安卓 App</b></td><td><code>agent/android</code> 原生 Kotlin，自动监控系统通知</td><td>安卓手机 / 云手机</td></tr>
+            <tr><td><b>桌面守护端</b></td><td><code>agent/desktop/vmq_agent.py</code> 单文件 Python</td><td>Windows / macOS / Linux</td></tr>
+            <tr><td><b>OneBot 协议端</b></td><td>NapCat / LLOneBot HTTP 上报至 <code>/onebot/report</code></td><td>QQ 机器人挂机服务器</td></tr>
+            <tr><td><b>免挂免CK</b></td><td>后台 alipaybill 绑定开放平台官方 APPID 密钥</td><td>Cloudflare 云端无感对账</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section" id="faq">
+      <h2>常见接入问题</h2>
+      <ol>
+        <li><b>签名错误</b>：请核对是否过滤了空参数、是否包含 <code>sign</code> 与 <code>sign_type</code>，以及字母排序是否遵循严格的 ASCII 码升序。</li>
+        <li><b>收不到回调通知</b>：请确保 <code>notify_url</code> 是公网可解析的有效地址，不能为 <code>localhost</code> 或带内网 IP。</li>
+        <li><b>响应格式</b>：商户接收到通知处理完毕后，HTTP 响应内容必须为纯文本字符串 <code>success</code>，不可附加 HTML 标签或换行。</li>
+      </ol>
+    </div>
+  </div>
 </div>
 
-<div class="sec"><h2>方式A：现成易支付插件（推荐）</h2>
-<p>WordPress/发卡/独角数卡等程序自带"易支付"插件，填三样：</p>
-<table class="table table-bordered"><tr><th>插件字段</th><th>填什么</th></tr>
-<tr><td>网关/接口地址</td><td><code>https://你的站点域名</code></td></tr>
-<tr><td>商户ID(pid)</td><td>商户中心显示的数字 ID</td></tr>
-<tr><td>商户密钥(key)</td><td>商户中心显示的 32 位密钥</td></tr></table>
-</div>
-
-<div class="sec"><h2>方式B：直连下单</h2>
-<p><b>创建订单</b>：请求 <code>GET/POST /submit.php</code>（浏览器跳转收银台）或 <code>/mapi.php</code>（返回 JSON：code/payurl/qrcode/trade_no）</p>
-<table class="table table-bordered"><tr><th>参数</th><th>必填</th><th>说明</th></tr>
-<tr><td>pid</td><td>是</td><td>商户ID</td></tr>
-<tr><td>type</td><td>是</td><td>支付方式</td></tr>
-<tr><td>out_trade_no</td><td>是</td><td>商户订单号(唯一)</td></tr>
-<tr><td>notify_url</td><td>是</td><td>异步通知地址(公网可访问)</td></tr>
-<tr><td>return_url</td><td>否</td><td>支付完成同步跳转</td></tr>
-<tr><td>name</td><td>是</td><td>商品名称</td></tr>
-<tr><td>money</td><td>是</td><td>金额(元, 两位小数)</td></tr>
-<tr><td>sign / sign_type</td><td>是</td><td>签名 / MD5 或 RSA</td></tr></table>
-<h4>签名规则</h4>
-<p>参数按 key ASCII 升序，排除 <code>sign/sign_type/空值</code>，<code>k=v&amp;</code> 拼接后：<b>MD5</b> = md5(拼接串+商户密钥)；<b>RSA</b> = SHA256withRSA(拼接串)，公钥在后台绑定，平台通知也用 RSA 回签。</p>
-${codeP(`// Node.js 下单示例
-const crypto = require('crypto');
-const gw = 'https://你的站点';
-const key = '商户密钥';
-const p = { pid: '1', type: 'alipay', out_trade_no: 'NO' + Date.now(),
-  notify_url: 'https://你的网站/notify', return_url: 'https://你的网站/ok',
-  name: '商品', money: '9.99' };
-const str = Object.keys(p).filter(k => p[k] !== '').sort()
-  .map(k => k + '=' + p[k]).join('&');
-const sign = crypto.createHash('md5').update(str + key).digest('hex');
-const qs = new URLSearchParams({ ...p, sign, sign_type: 'MD5' }).toString();
-// 302 跳转: gw + '/submit.php?' + qs   (mapi.php 同参数 POST 返回 JSON)`)}
-${codeP(`# Python 验证异步通知 (notify)
-# 平台 GET 你的 notify_url?pid=&trade_no=&out_trade_no=&type=&name=&money=&trade_status=TRADE_SUCCESS&sign=&sign_type=MD5
-from urllib.parse import parse_qsl, urlsplit
-import hashlib
-def verify(params, key):
-    items = sorted((k, v) for k, v in params.items() if k not in ('sign', 'sign_type') and v != '')
-    s = '&'.join(f'{k}={v}' for k, v in items)
-    return hashlib.md5((s + key).encode()).hexdigest() == params['sign']
-# 验签通过后输出 success (原样小写), 否则平台最多重试 5 次`)}
-</div>
-
-<div class="sec"><h2>订单查询 / 退款</h2>
-${codeP(`# 查询 (商户密钥方式)
-GET /api.php?act=order&pid=商户ID&key=商户密钥&trade_no=平台订单号
-# 查询 (系统签名方式)
-GET /api.php?act=order&trade_no=平台订单号&sign=md5(系统密钥+订单号+系统密钥)
-# 退款 (POST 表单)
-POST /api.php?act=refundapi   trade_no=平台订单号 & money=金额 & key=md5(订单号+系统密钥+订单号)`)}
-</div>
-
-<div class="sec"><h2>码牌收款（无需网站）</h2>
-<p>收款页：<code>/pay/你的PID</code>，买家输入金额选择支付方式即出收银台。把链接生成二维码打印即成"码牌"。</p>
-</div>
-
-<div class="sec"><h2>监控端（个人码到账确认）</h2>
-<table class="table table-bordered">
-<tr><th>端</th><th>方案</th></tr>
-<tr><td>安卓</td><td><code>agent/android</code> 源码，GitHub Actions 自动打包 APK</td></tr>
-<tr><td>Win/Mac/Linux</td><td><code>agent/desktop/vmq_agent.py</code>（通知库/dbus/支付宝账单源）</td></tr>
-<tr><td>QQ</td><td>NapCat/LLOneBot 协议端 HTTP 上报地址填 <code>/onebot/report?token=后台onebot_token</code>；或后台 <code>qqbill</code> 账单轮询渠道</td></tr>
-<tr><td>支付宝免挂</td><td>后台 <code>alipaybill</code> 渠道：填开放平台 APPID+密钥(免CK推荐) 或网页 Cookie</td></tr>
-<tr><td>iOS</td><td>系统限制无法后台监听，请用免CK/账单轮询渠道</td></tr></table>
-</div>
-
-<div class="sec"><h2>常见问题</h2>
-<ol>
-<li><b>提示"签名错误"</b>：检查排序是否 ASCII 升序、是否漏排除 sign/sign_type、空值是否参与、密钥是否复制完整</li>
-<li><b>订单一直待支付</b>：对应渠道未启用/映射缺失；Cookie 或监控端掉线；notify_url 不可公网访问</li>
-<li><b>回调收不到</b>：notify_url 必须公网可访问且返回正文 <code>success</code>；平台最多重试 5 次</li>
-<li><b>想收 USDT/QQ</b>：后台添加 BEpusdt(USDT) 或 qqbill/QQ 渠道，并更新类型映射</li>
-</ol>
-</div>
-</div></body></html>`);
+</body></html>`);
 });
-
 // ==================== 管理端扩展 ====================
 features.use('/admin/api/*', async (c, next) => {
   if (!(await requireAdmin(c.env, c.req.raw))) return c.json({ code: 403, msg: '未登录' }, 403);

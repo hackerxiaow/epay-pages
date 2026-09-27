@@ -335,50 +335,128 @@ function cashierPage(o: {
 }): string {
   const isImg = /^https?:\/\/.+\.(png|jpe?g|gif|webp)(\?|$)/i.test(o.qr);
   const typeMap: Record<string, [string, string]> = {
-    wxpay: ['微信支付', '#1aad19'],
-    alipay: ['支付宝', '#1678ff'],
-    qqpay: ['QQ支付', '#12b7f5'],
-    usdt: ['USDT支付', '#26a17b'],
+    wxpay: ['微信支付', '#10b981'],
+    alipay: ['支付宝', '#2563eb'],
+    qqpay: ['QQ 钱包', '#0284c7'],
+    usdt: ['USDT 泰达币', '#059669'],
   };
-  const [typeLabel, typeColor] = typeMap[o.type] || [o.type, '#1678ff'];
+  const [typeLabel, typeColor] = typeMap[o.type] || [o.type, '#2563eb'];
+
   return `<!DOCTYPE html><html lang="zh-cn"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>${o.orderName} - 收银台</title>
-<script src="/assets/vendor/jquery/3.4.1/jquery.min.js"></script>
-<script src="/assets/vendor/jquery.qrcode/1.0/jquery.qrcode.min.js"></script>
 <style>
-body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;background:#f5f6f7;margin:0}
-.pay-box{max-width:400px;margin:40px auto;background:#fff;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.06);overflow:hidden}
-.pay-head{padding:18px 24px;color:#fff;background:${typeColor};font-size:15px;display:flex;justify-content:space-between;align-items:center}
-.pay-head .amt{font-size:26px;font-weight:700}
-.pay-body{padding:28px 24px;text-align:center}
-.order-name{color:#333;font-size:16px;margin-bottom:6px}
-.order-no{color:#999;font-size:12px;margin-bottom:20px}
-#qrcode{display:inline-block;padding:12px;border:1px solid #eee;border-radius:8px}
-.pay-tip{color:#888;font-size:13px;margin-top:16px}
-.state{color:#999;font-size:13px;margin-top:14px}
-.state.ok{color:#1aad19;font-weight:700}
-.err{color:#e64340;padding:30px;font-size:15px}
+:root{
+  --bg:#f1f5f9;
+  --surface:#ffffff;
+  --text:#0f172a;
+  --text-muted:#64748b;
+  --border:#e2e8f0;
+  --color:${typeColor};
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px}
+.checkout-card{background:var(--surface);width:100%;max-width:400px;border-radius:24px;border:1px solid rgba(226,232,240,0.8);box-shadow:0 20px 40px -15px rgba(15,23,42,0.08);overflow:hidden;animation:fadeIn .3s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+.card-top{padding:24px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.site-badge{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;color:var(--text)}
+.secure-pill{font-size:11px;font-weight:600;color:#059669;background:#ecfdf5;padding:4px 10px;border-radius:100px;display:flex;align-items:center;gap:4px}
+
+.card-body{padding:28px 24px 32px;text-align:center}
+.channel-pill{display:inline-flex;align-items:center;gap:6px;background:#f8fafc;border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:600;padding:6px 14px;border-radius:100px;margin-bottom:16px}
+.amount-box{margin-bottom:12px}
+.amount-box .sym{font-size:24px;font-weight:700;margin-right:2px}
+.amount-box .val{font-size:44px;font-weight:800;letter-spacing:-1px;color:var(--text)}
+
+.order-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px}
+.order-num{font-size:12px;color:var(--text-muted);font-family:monospace}
+
+.qr-box{margin:24px auto 16px;width:200px;height:200px;background:#fff;border:1px solid var(--border);border-radius:18px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,0.04);padding:8px}
+.qr-box img{width:184px;height:184px;border-radius:12px;display:block}
+#qrcode{width:184px;height:184px;display:flex;align-items:center;justify-content:center}
+
+.pay-tip{font-size:13px;color:var(--text-muted);margin:16px 0 20px;line-height:1.6}
+.pay-tip b{color:var(--color)}
+
+.btn-transfer{display:block;width:100%;background:var(--color);color:#fff;font-size:15px;font-weight:700;padding:14px;border-radius:14px;text-decoration:none;margin-top:16px;box-shadow:0 4px 14px -2px rgba(37,99,235,0.4);transition:all .2s}
+.btn-transfer:active{transform:scale(0.98);opacity:0.9}
+
+.status-pill{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--text-muted);background:#f8fafc;border:1px solid var(--border);padding:6px 16px;border-radius:100px;margin-top:20px}
+.pulse-dot{width:8px;height:8px;border-radius:50%;background:#f59e0b;animation:pulse 1.4s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.3;transform:scale(0.85)}}
+
+.status-pill.success{background:#ecfdf5;border-color:#a7f3d0;color:#059669;font-weight:700}
+.status-pill.success .pulse-dot{background:#10b981;animation:none}
+
+.card-foot{margin-top:24px;font-size:12px;color:var(--text-muted);display:flex;justify-content:space-between;border-top:1px dashed var(--border);padding-top:16px}
 </style></head><body>
-<div class="pay-box">
-  <div class="pay-head"><span>${typeLabel}</span><span class="amt">¥${o.money}</span></div>
-  <div class="pay-body">
-    ${o.err ? `<div class="err">${o.err}</div>` : `
-    <div class="order-name">${o.orderName}</div>
-    <div class="order-no">订单号：${o.tradeNo}</div>
-    ${o.qr ? (isImg ? `<img src="${o.qr}" alt="收款码" style="width:200px;border-radius:8px">` : `<div id="qrcode"></div>`) : ''}
-    <div class="pay-tip" data-pay="${o.money}">${o.qr ? '请使用' + (o.type === 'usdt' ? '链上钱包' : '手机' + typeLabel) + '扫码' : '请转账'} <b style="color:${typeColor}">¥${o.money}</b>（金额含唯一尾数，请勿修改），完成后自动跳转</div>
-    ${o.transferUrl ? `<a href="${o.transferUrl}" style="display:block;background:#1678ff;color:#fff;text-align:center;padding:12px;border-radius:6px;text-decoration:none;font-size:15px;margin-top:14px">打开支付宝转账（金额已填好）</a>` : ''}
-    <div class="state" id="state">等待支付中…</div>`}
+
+<div class="checkout-card">
+  <div class="card-top">
+    <div class="site-badge">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      <span>${o.siteName}</span>
+    </div>
+    <div class="secure-pill">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <span>安全收银台</span>
+    </div>
+  </div>
+
+  <div class="card-body">
+    ${o.err ? `<div style="color:#ef4444;padding:30px 0;font-weight:600">${o.err}</div>` : `
+    <div class="channel-pill">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${typeColor}"></span>
+      <span>${typeLabel}</span>
+    </div>
+
+    <div class="amount-box">
+      <span class="sym">¥</span><span class="val" data-pay="${o.money}">${o.money}</span>
+    </div>
+
+    <div class="order-title">${o.orderName}</div>
+    <div class="order-num">单号：${o.tradeNo}</div>
+
+    ${o.qr ? (isImg
+      ? `<div class="qr-box"><img src="${o.qr}" alt="收款码"></div>`
+      : `<div class="qr-box"><div id="qrcode"></div></div>`)
+      : ''}
+
+    <div class="pay-tip">
+      ${o.qr ? '请使用手机' + typeLabel + '扫码支付' : '请向上方账户完成转账'} <b>¥${o.money}</b><br>
+      <span style="font-size:11px">金额含专属校验尾数，请勿修改金额，支付后自动跳转</span>
+    </div>
+
+    ${o.transferUrl ? `<a class="btn-transfer" href="${o.transferUrl}">打开${typeLabel}（金额已填好） →</a>` : ''}
+
+    <div>
+      <div class="status-pill" id="state">
+        <span class="pulse-dot"></span>
+        <span>等待扫码支付中…</span>
+      </div>
+    </div>
+
+    <div class="card-foot">
+      <span>商户：${o.merchant}</span>
+      <span>支付中请勿关闭</span>
+    </div>`}
   </div>
 </div>
+
+<script src="/assets/vendor/jquery/3.4.1/jquery.min.js?v=1"></script>
+<script src="/assets/vendor/jquery.qrcode/1.0/jquery.qrcode.min.js?v=1"></script>
 <script>
-if(document.getElementById('qrcode')){jQuery('#qrcode').qrcode({width:200,height:200,text:${JSON.stringify(o.qr)}});}
+if(document.getElementById('qrcode')){jQuery('#qrcode').qrcode({width:176,height:176,text:${JSON.stringify(o.qr)}});}
 var timer=setInterval(function(){
   jQuery.get('/api/cashier/status?trade_no=${o.tradeNo}',function(r){
-    if(r.code===0&&r.status>=1){clearInterval(timer);jQuery('#state').text('支付成功，正在跳转…').addClass('ok');
-      setTimeout(function(){location.href='/payok/${o.tradeNo}';},800);}
+    if(r.code===0&&r.status>=1){
+      clearInterval(timer);
+      var st=jQuery('#state');
+      st.addClass('success').html('<span class="pulse-dot"></span><span>支付成功，正在跳转…</span>');
+      setTimeout(function(){location.href='/payok/${o.tradeNo}';},800);
+    }
   });
 },2000);
-</script></body></html>`;
+</script></body></html>`
 }
