@@ -3,6 +3,7 @@ import { Bindings } from '../auth';
 import { getConfig, setConfig } from '../db';
 import { ChannelCtx, ChannelPlugin, ChannelRow } from '../channel';
 import { markOrderPaid, sendMerchantNotifySafe } from '../orderflow';
+import { alipayRequest } from './alipayf2f';
 import { OrderRow } from '../db';
 
 /**
@@ -16,8 +17,13 @@ import { OrderRow } from '../db';
  */
 
 export interface AlipayBillConfig {
-  cookie: string;
-  bill_url?: string; // 默认 consumeprod.alipay.com 账单页, 测试可覆盖
+  cookie?: string;
+  appid?: string; // 开放平台 APPID (填了则走官方API, 免CK)
+  private_key?: string; // 应用私钥
+  alipay_public_key?: string; // 支付宝公钥
+  gateway?: string; // 网关(测试可覆盖)
+  user_id?: string; // 支付宝用户ID(PID, 2088开头, 用于生成免输金额转账链接)
+  bill_url?: string; // Cookie 模式账单页, 测试可覆盖
   qrcode_alipay?: string; // 收款码图片链接 (展示给买家)
   pay_suffix?: string; // '1' 启用尾数防撞单 (默认开)
 }
@@ -31,6 +37,38 @@ export interface BillEntry {
   id: string;
   time: number; // unix 秒
   amount: number; // 分
+}
+
+/** 解析官方 accountlog.query 响应: 递归提取含 trans_dt/trans_amount 的流水 */
+export function parseAccountLog(text: string): BillEntry[] {
+  const out: BillEntry[] = [];
+  const seen = new Set<string>();
+  const walk = (node: unknown) => {
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (node && typeof node === 'object') {
+      const obj = node as Record<string, unknown>;
+      const dt = String(obj.trans_dt || obj.trans_date || obj.trade_date || '');
+      const amt = Number(obj.trans_amount ?? obj.amount ?? 0);
+      if (dt && amt > 0) {
+        const ts = billTime(dt) || Math.floor(Date.parse(dt.replace(' ', 'T') + '+08:00') / 1000) || Math.floor(new Date(dt).getTime() / 1000);
+        const direction = String(obj.trans_direction ?? obj.direction ?? obj.in_out ?? 'in');
+        const isIn = direction === 'in' || direction === '收入' || direction === '' ;
+        const id = String(obj.trade_no || obj.trans_no || obj.order_no || `${ts}_${Math.round(amt * 100)}`);
+        if (ts > 0 && isIn && !seen.has(id)) {
+          seen.add(id);
+          out.push({ id, time: ts, amount: Math.round(amt * 100) });
+        }
+      }
+      Object.values(obj).forEach(walk);
+    }
+  };
+  try {
+    walk(JSON.parse(text));
+  } catch {}
+  return out;
 }
 
 /** 解析账单: 支持表格 HTML 与 JSON 数组两种格式 */
@@ -94,13 +132,32 @@ async function ensurePayAmount(env: Bindings, order: OrderRow, suffixOn: boolean
   return cents2str(order.money);
 }
 
+/** 拉取官方账单流水 (免CK): 复用开放平台 RSA2 客户端 */
+async function fetchAccountLogBills(cfg: AlipayBillConfig): Promise<BillEntry[]> {
+  const d = new Date(Date.now() + 8 * 3600 * 1000);
+  const p = (n: number) => String(n).padStart(2, '0');
+  const billDate = `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
+  try {
+    const r = await alipayRequest(cfg as unknown as Parameters<typeof alipayRequest>[0], 'alipay.data.bill.accountlog.query', { bill_date: billDate });
+    if (r.code !== '10000') return [];
+    return parseAccountLog(JSON.stringify(r.data || {}));
+  } catch {
+    return [];
+  }
+}
+
 export const alipayBillPlugin: ChannelPlugin = {
   id: 'alipaybill',
-  name: '支付宝个人码(账单轮询·免挂机)',
+  name: '支付宝个人码(账单轮询·免挂机/免CK)',
   types: ['alipay'],
   inputs: [
-    { name: 'cookie', label: '支付宝网页版 Cookie(整串粘贴)', required: true, multiline: true },
-    { name: 'bill_url', label: '账单接口地址(留空用默认)' },
+    { name: 'appid', label: '开放平台APPID(20开头, 填了即免CK模式)', required: false },
+    { name: 'private_key', label: '应用私钥(免CK模式)', multiline: true },
+    { name: 'alipay_public_key', label: '支付宝公钥(免CK模式)', multiline: true },
+    { name: 'gateway', label: '网关(留空用官方, 测试可覆盖)' },
+    { name: 'cookie', label: '网页Cookie(旧方案, 免CK不填)' },
+    { name: 'user_id', label: '支付宝用户ID(PID, 2088开头, 用于免输金额转账)' },
+    { name: 'bill_url', label: 'Cookie模式账单接口地址(留空用默认)' },
     { name: 'qrcode_alipay', label: '个人收款码图片链接' },
     { name: 'pay_suffix', label: '尾数防撞单(1开, 默认开)' },
   ],
@@ -109,30 +166,43 @@ export const alipayBillPlugin: ChannelPlugin = {
     const cfg = parseConfig(JSON.stringify(ctx.channel.config));
     const suffixOn = cfg.pay_suffix !== '0';
     const payAmount = await ensurePayAmount(ctx.env, ctx.order, suffixOn);
-    return { ok: true, qrContent: cfg.qrcode_alipay || '', payAmount };
+    // 免输金额转账链接: 唤起支付宝APP且金额已填好
+    let transferUrl = '';
+    if (cfg.user_id) {
+      transferUrl = `alipays://platformapi/startapp?appId=20000123&actionType=toAccount&userId=${encodeURIComponent(cfg.user_id)}&amount=${encodeURIComponent(payAmount)}&memo=${encodeURIComponent(ctx.order.trade_no)}`;
+    }
+    return { ok: true, qrContent: cfg.qrcode_alipay || '', payAmount, transferUrl };
   },
 };
 
 /** 拉取并匹配一个渠道的账单 */
 export async function pollAlipayBillChannel(env: Bindings, ch: ChannelRow): Promise<number> {
   const cfg = parseConfig(ch.config);
-  if (!cfg.cookie) return 0;
-  const url = cfg.bill_url || 'https://consumeprod.alipay.com/finance/record.htm';
-  let text = '';
-  try {
-    const resp = await fetch(url, {
-      headers: {
-        Cookie: cfg.cookie,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36',
-        Referer: 'https://my.alipay.com/',
-      },
-      signal: AbortSignal.timeout(10000),
-    });
-    text = await resp.text();
-  } catch {
+  let bills: BillEntry[] = [];
+  if (cfg.appid && cfg.private_key) {
+    // 官方 API 账单源 (免CK): alipay.data.bill.accountlog.query
+    bills = await fetchAccountLogBills(cfg);
+  } else if (cfg.cookie) {
+    // 网页 Cookie 账单源 (旧方案)
+    const url = cfg.bill_url || 'https://consumeprod.alipay.com/finance/record.htm';
+    let text = '';
+    try {
+      const resp = await fetch(url, {
+        headers: {
+          Cookie: cfg.cookie,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36',
+          Referer: 'https://my.alipay.com/',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      text = await resp.text();
+    } catch {
+      return 0;
+    }
+    bills = parseBills(text);
+  } else {
     return 0;
   }
-  const bills = parseBills(text);
   if (!bills.length) return 0;
 
   let seen: string[] = [];
@@ -144,6 +214,11 @@ export async function pollAlipayBillChannel(env: Bindings, ch: ChannelRow): Prom
 
   for (const b of bills) {
     if (seenSet.has(b.id)) continue;
+    if (b.time < now() - 86400) {
+      // 超出匹配窗口的旧账单, 永远不会再匹配, 直接标记避免反复扫描
+      seenSet.add(b.id);
+      continue;
+    }
     // 时间窗: 账单前24h内创建的待支付订单
     const { results } = await env.DB.prepare(
       'SELECT * FROM orders WHERE channel=? AND status=0 AND addtime<=? AND addtime>=? ORDER BY id ASC LIMIT 20'

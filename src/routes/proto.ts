@@ -214,6 +214,7 @@ proto.get('/cashier/:tradeNo', async (c) => {
       qr,
       merchant: user?.username || String(order.uid),
       err: name,
+      transferUrl: pr.transferUrl || '',
     })
   );
 });
@@ -330,6 +331,7 @@ function cashierPage(o: {
   qr: string;
   merchant: string;
   err: string;
+  transferUrl?: string;
 }): string {
   const isImg = /^https?:\/\/.+\.(png|jpe?g|gif|webp)(\?|$)/i.test(o.qr);
   const typeLabel = o.type === 'wxpay' ? '微信支付' : o.type === 'usdt' ? 'USDT支付' : '支付宝';
@@ -361,6 +363,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;ba
     <div class="order-no">订单号：${o.tradeNo}</div>
     ${o.qr ? (isImg ? `<img src="${o.qr}" alt="收款码" style="width:200px;border-radius:8px">` : `<div id="qrcode"></div>`) : ''}
     <div class="pay-tip" data-pay="${o.money}">${o.qr ? '请使用' + (o.type === 'usdt' ? '链上钱包' : '手机' + typeLabel) + '扫码' : '请转账'} <b style="color:${typeColor}">¥${o.money}</b>（金额含唯一尾数，请勿修改），完成后自动跳转</div>
+    ${o.transferUrl ? `<a href="${o.transferUrl}" style="display:block;background:#1678ff;color:#fff;text-align:center;padding:12px;border-radius:6px;text-decoration:none;font-size:15px;margin-top:14px">打开支付宝转账（金额已填好）</a>` : ''}
     <div class="state" id="state">等待支付中…</div>`}
   </div>
 </div>

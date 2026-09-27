@@ -130,8 +130,22 @@ async function mockUpstreamHandler(req, res) {
     req.on('end', () => {
       const p = Object.fromEntries(new URLSearchParams(body));
       const sign = p.sign; delete p.sign; delete p.sign_type;
-      const valid = signParams(p, globalThis.__aliAppPub || '') === undefined; // RSA 用下方专门校验
       globalThis.__lastAlipayReq = { ...p, rawSign: sign, rawStr: signStr(p) };
+      // 官方账单查询 (免CK模式): 按请求公钥验签, 返回 mockBills 流水
+      if (p.method === 'alipay.data.bill.accountlog.query') {
+        const pubKey = globalThis.__aliApiPub;
+        const okSign = pubKey ? crypto.createVerify('RSA-SHA256').update(signStr(p)).verify(pubKey, sign, 'base64') : false;
+        globalThis.__aliApiSignValid = okSign;
+        const inner = {
+          code: '10000', msg: 'Success',
+          bill_transaction_list: { list: mockBills.map((b) => ({ trans_dt: b.timeStr, trans_amount: b.amount, trans_status: '交易成功', trade_no: b.id })) },
+        };
+        const respSign = crypto.createSign('RSA-SHA256').update(JSON.stringify(inner)).sign(globalThis.__aliApiPriv || globalThis.__aliPriv, 'base64');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ alipay_data_bill_accountlog_query_response: inner, sign: respSign }));
+        return;
+      }
+      // 当面付预下单
       const inner = { code: '10000', msg: 'Success', out_trade_no: p.out_trade_no, qr_code: 'https://qr.alipay.com/mock_' + p.out_trade_no };
       const innerStr = JSON.stringify(inner);
       const respSign = crypto.createSign('RSA-SHA256').update(innerStr).sign(globalThis.__aliPriv, 'base64');
@@ -709,6 +723,69 @@ async function main() {
     r = await fetch(BASE + '/user/api/me', { headers: { Cookie: merchantCookie } });
     j = await r.json();
     ok(j.data.money === '47.87', `余额按订单原金额入账 (got ${j.data.money}, expect 47.87)`);
+
+
+    console.log('\n== 20. 码支付平台兼容 (submit 跳转模式) ==');
+    // mock 上游不实现 mapi.php 的场景: 建一个纯网页收银台的码支付渠道
+    r = await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ plugin: 'epay', name: '码支付(submit)', config: { url: `http://127.0.0.1:${UPSTREAM_PORT}`, pid: '2000', key: UPSTREAM_KEY, api_mode: 'submit' } }) });
+    ok((await r.json()).code === 0, '创建码支付 submit 模式渠道');
+    channelsList = (await (await fetch(BASE + '/admin/api/channels', { headers: { Cookie: adminCookie } })).json()).data.list;
+    const codePayChId = channelsList.filter((x) => x.plugin === 'epay').map((x) => x.id).pop();
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ channel_map: JSON.stringify({ alipay: codePayChId, wxpay: wxChId }) }) });
+    const cpArgs = { ...orderArgs, out_trade_no: 'CODEPAY' + Date.now(), money: '3.33' };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...cpArgs, sign: signParams(cpArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === 1 && j.payurl.includes('/submit.php?') && j.payurl.includes('sign='), 'submit 模式返回上游收银台跳转链接');
+    // 上游回调路径不变: 直接模拟码支付回调
+    const cpNotify = { pid: '2000', trade_no: 'CP' + Date.now(), out_trade_no: j.trade_no, type: 'alipay', name: cpArgs.name, money: '3.33', trade_status: 'TRADE_SUCCESS' }; // 上游回传平台单号(协议行为)
+    cpNotify.sign = signParams(cpNotify, UPSTREAM_KEY);
+    cpNotify.sign_type = 'MD5';
+    r = await fetch(`${BASE}/channel/notify/epay/${codePayChId}?` + new URLSearchParams(cpNotify));
+    ok((await r.text()) === 'success', '码支付回调验签并确认订单');
+    await waitFor(async () => merchantNotifies.some((x) => x.params.out_trade_no === cpArgs.out_trade_no), 8000);
+    ok(merchantNotifies.some((x) => x.params.out_trade_no === cpArgs.out_trade_no), '码支付订单商户收到通知');
+
+
+    console.log('\n== 21. 支付宝免CK模式 (开放平台官方账单API) ==');
+    const apiApp = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+    const apiSrv = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+    globalThis.__aliApiPub = apiApp.publicKey;
+    globalThis.__aliApiPriv = apiSrv.privateKey;
+    r = await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ plugin: 'alipaybill', name: '个人码免CK', config: { appid: '2021000199999999', private_key: apiApp.privateKey, alipay_public_key: apiSrv.publicKey, gateway: `http://127.0.0.1:${UPSTREAM_PORT}/gateway.do`, user_id: '2088123456789012', qrcode_alipay: 'https://img.example/apiqr.png' } }) });
+    ok((await r.json()).code === 0, '创建免CK渠道(开放平台密钥)');
+    channelsList = (await (await fetch(BASE + '/admin/api/channels', { headers: { Cookie: adminCookie } })).json()).data.list;
+    const apiChId = channelsList.filter((x) => x.plugin === 'alipaybill').map((x) => x.id).pop();
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ channel_map: JSON.stringify({ alipay: apiChId, wxpay: wxChId }) }) });
+    const apiArgs = { ...orderArgs, out_trade_no: 'APIBILL' + Date.now(), money: '4.44' };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...apiArgs, sign: signParams(apiArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === 1 && j.qrcode === 'https://img.example/apiqr.png', '免CK渠道下单返回收款码');
+    const apiTradeNo = j.trade_no;
+    r = await fetch(BASE + '/cashier/' + apiTradeNo);
+    const apiCashier = await r.text();
+    const apiPay = (apiCashier.match(/data-pay="([\d.]+)"/) || [])[1];
+    ok(!!apiPay && parseFloat(apiPay) >= 4.45 && parseFloat(apiPay) <= 5.43, '收银台尾数金额展示');
+    ok(apiCashier.includes('alipays://platformapi/startapp') && apiCashier.includes('amount=') && apiCashier.includes('2088123456789012'), '免输金额转账链接(唤起支付宝并带金额)');
+    // 放入匹配账单 -> 官方API轮询确认
+    await new Promise((resolve) => {
+      const u = new URL(`http://127.0.0.1:${UPSTREAM_PORT}/setbill`);
+      const rq = http.request({ host: u.hostname, port: u.port, path: u.pathname, method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res2) => { res2.resume(); resolve(); });
+      rq.end(JSON.stringify({ amount: apiPay, timeStr: bj(0) }));
+    });
+    await waitFor(async () => {
+      const rr = await fetch(BASE + '/api/cashier/status?trade_no=' + apiTradeNo);
+      return (await rr.json()).status >= 1;
+    }, 20000);
+    r = await fetch(BASE + '/api/cashier/status?trade_no=' + apiTradeNo);
+    j = await r.json();
+    ok(j.status === 1, '官方账单API轮询自动确认 (免CK免挂机)');
+    ok(globalThis.__aliApiSignValid === true, '我方对官方账单API的RSA2请求签名正确');
+    ok(globalThis.__lastAlipayReq.method === 'alipay.data.bill.accountlog.query' && globalThis.__lastAlipayReq.biz_content.includes('bill_date'), 'accountlog.query 请求参数正确');
+    await waitFor(async () => merchantNotifies.some((x) => x.params.out_trade_no === apiArgs.out_trade_no), 8000);
+    ok(merchantNotifies.some((x) => x.params.out_trade_no === apiArgs.out_trade_no), '免CK订单商户收到通知');
+    r = await fetch(BASE + '/user/api/me', { headers: { Cookie: merchantCookie } });
+    j = await r.json();
+    ok(j.data.money === '55.64', `余额对账 (got ${j.data.money}, expect 55.64)`);
 
   } catch (e) {
     fail++;

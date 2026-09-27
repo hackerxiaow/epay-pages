@@ -11,7 +11,7 @@ export interface AlipayConfig {
   enable_transfer?: string; // '1' 启用自动打款
 }
 
-async function alipayRequest(
+export async function alipayRequest(
   cfg: AlipayConfig,
   method: string,
   bizContent: Record<string, unknown>,

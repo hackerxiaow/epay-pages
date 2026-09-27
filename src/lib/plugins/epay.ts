@@ -7,9 +7,10 @@ export const epayPlugin: ChannelPlugin = {
   name: '易支付上游',
   types: ['alipay', 'wxpay', 'qqpay', 'usdt'],
   inputs: [
-    { name: 'url', label: '上游地址(含 http)', required: true },
+    { name: 'url', label: '上游地址(含 http, 支持易支付/码支付平台)', required: true },
     { name: 'pid', label: '上游商户ID', required: true },
     { name: 'key', label: '上游商户密钥', required: true },
+    { name: 'api_mode', label: '接口模式: mapi=接口下单(默认) / submit=网页跳转' },
   ],
 
   async createOrder(ctx: ChannelCtx) {
@@ -29,6 +30,11 @@ export const epayPlugin: ChannelPlugin = {
     const sign = buildSign(params, key);
     const body = new URLSearchParams({ ...params, sign, sign_type: 'MD5' });
     const base = url.replace(/\/+$/, '');
+    const apiMode = ctx.channel.config['api_mode'] || 'mapi';
+    // submit 模式: 直接跳上游收银台 (部分码支付平台无 mapi 接口)
+    if (apiMode === 'submit') {
+      return { ok: true, payUrl: `${base}/submit.php?${body.toString()}` };
+    }
     let resp: Response;
     try {
       resp = await fetch(`${base}/mapi.php`, {
@@ -44,7 +50,8 @@ export const epayPlugin: ChannelPlugin = {
     try {
       data = JSON.parse(text);
     } catch {
-      return { ok: false, msg: '上游返回异常: ' + text.slice(0, 120) };
+      // 非 JSON 返回: 上游可能仅支持网页收银台, 自动回退 submit 跳转
+      return { ok: true, payUrl: `${base}/submit.php?${body.toString()}` };
     }
     if (data.code !== 1) return { ok: false, msg: String(data.msg || '上游下单失败') };
     const payUrl = String(data.payurl || data.url || '');
