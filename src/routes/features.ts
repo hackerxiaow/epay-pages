@@ -181,7 +181,7 @@ features.get('/paygo/:uid', async (c) => {
   return c.redirect(`/cashier/${r.tradeNo}`);
 });
 
-// ==================== 文档页 (现代沉浸式开发文档) ====================
+// ==================== 文档页 (移动端极致自适应 + 现代沉浸式开发文档) ====================
 features.get('/doc', (c) => {
   const codeBox = (title: string, lang: string, code: string) => `
 <div class="code-box">
@@ -205,7 +205,7 @@ features.get('/doc', (c) => {
   --border:#e2e8f0;
   --primary:#2563eb;
   --primary-hover:#1d4ed8;
-  --radius:12px;
+  --radius:16px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
@@ -213,38 +213,43 @@ a{text-decoration:none;color:var(--primary)}
 a:hover{text-decoration:underline}
 
 /* 顶部导航 */
-.nav-wrap{position:sticky;top:0;z-index:100;background:rgba(255,255,255,0.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+.nav-wrap{position:sticky;top:0;z-index:100;background:rgba(255,255,255,0.88);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
 .nav-box{max-width:1160px;margin:0 auto;height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 20px}
 .nav-brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:700;color:var(--text);text-decoration:none}
 .nav-brand svg{width:24px;height:24px;color:var(--primary)}
-.nav-links{display:flex;align-items:center;gap:20px}
-.nav-links a{color:var(--text-muted);font-size:14px;font-weight:500}
-.nav-links a:hover{color:var(--primary);text-decoration:none}
+.nav-links{display:flex;align-items:center;gap:18px}
+.nav-links a{color:var(--text-muted);font-size:14px;font-weight:500;text-decoration:none}
+.nav-links a:hover{color:var(--primary)}
+.nav-btn{background:var(--primary);color:#fff!important;font-size:13px;font-weight:600;padding:6px 14px;border-radius:100px;transition:background .2s}
+.nav-btn:hover{background:var(--primary-hover)}
 
-/* 布局 */
-.layout{max-width:1160px;margin:32px auto 80px;padding:0 20px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px;align-items:start}
+/* 移动端横向滑动胶囊目录 (Stripe/Tailwind 移动端同款) */
+.mobile-anchors{display:none}
+
+/* 桌面端双栏布局 */
+.layout{max-width:1160px;margin:32px auto 80px;padding:0 20px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px;align-items:start;box-sizing:border-box}
 .sidebar{position:sticky;top:92px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 12px;display:flex;flex-direction:column;gap:4px}
 .sidebar a{font-size:13px;font-weight:500;color:var(--text-muted);padding:8px 14px;border-radius:8px;transition:all .15s}
 .sidebar a:hover{background:var(--bg);color:var(--primary);text-decoration:none}
 
-.content{display:flex;flex-direction:column;gap:36px}
-.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:32px}
+.content{display:flex;flex-direction:column;gap:36px;min-width:0;max-width:100%}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:32px;min-width:0;max-width:100%;box-sizing:border-box}
 .section h2{font-size:22px;font-weight:800;letter-spacing:-0.5px;color:var(--text);margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
-.section h2::before{content:"";width:4px;height:20px;background:var(--primary);border-radius:2px;display:inline-block}
+.section h2::before{content:"";width:4px;height:20px;background:var(--primary);border-radius:2px;display:inline-block;flex-shrink:0}
 .section h3{font-size:16px;font-weight:700;margin:24px 0 10px;color:var(--text)}
 .section p{font-size:14px;color:var(--text-muted);margin-bottom:14px;line-height:1.7}
 .section ul,.section ol{margin-left:20px;margin-bottom:16px;color:var(--text-muted);font-size:14px;line-height:1.8}
 .badge-tag{background:#eff6ff;color:var(--primary);padding:3px 8px;border-radius:6px;font-size:12px;font-weight:600;font-family:monospace}
 
-/* 表格响应式容器 */
-.table-wrap{overflow-x:auto;margin:16px 0;border:1px solid var(--border);border-radius:8px}
-table{width:100%;border-collapse:collapse;font-size:13px;text-align:left}
+/* 表格响应式容器 (移动端内部横向自适应滑动) */
+.table-wrap{width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:16px 0;border:1px solid var(--border);border-radius:10px}
+table{width:100%;min-width:440px;border-collapse:collapse;font-size:13px;text-align:left}
 th{background:#f8fafc;padding:10px 14px;font-weight:600;color:var(--text);border-bottom:1px solid var(--border)}
 td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text-muted)}
 tr:last-child td{border-bottom:none}
 
 /* macOS 代码块 */
-.code-box{border-radius:10px;overflow:hidden;background:#0f172a;margin:16px 0;border:1px solid #1e293b}
+.code-box{width:100%;max-width:100%;border-radius:12px;overflow:hidden;background:#0f172a;margin:16px 0;border:1px solid #1e293b}
 .code-header{background:#1e293b;padding:8px 14px;display:flex;align-items:center;justify-content:space-between;color:#94a3b8;font-size:12px}
 .code-dots{display:flex;gap:6px}
 .code-dots span{width:10px;height:10px;border-radius:50%}
@@ -253,14 +258,22 @@ tr:last-child td{border-bottom:none}
 .code-dots span:nth-child(3){background:#10b981}
 .code-title{font-weight:600;color:#cbd5e1}
 .code-lang{text-transform:uppercase;font-size:10px;letter-spacing:0.5px}
-pre{padding:16px;overflow-x:auto;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12.5px;line-height:1.6}
+pre{width:100%;max-width:100%;padding:14px;overflow-x:auto;-webkit-overflow-scrolling:touch;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;line-height:1.6;box-sizing:border-box}
 
-/* 响应式 */
+/* 响应式断点 (完美自适应) */
 @media (max-width:840px){
-  .layout{grid-template-columns:1fr;gap:20px}
-  .sidebar{position:static;display:none}
-  .section{padding:20px}
-  .section h2{font-size:19px}
+  .layout{display:block;width:100%;max-width:100%;padding:16px 14px;margin:12px auto 60px}
+  .sidebar{display:none}
+  .section{padding:20px 16px;border-radius:14px}
+  .section h2{font-size:18px}
+  .nav-box{padding:0 16px}
+  .nav-links a:not(.nav-btn){display:none}
+  
+  /* 移动端置顶横向滑块 */
+  .mobile-anchors{display:flex;gap:8px;overflow-x:auto;padding:10px 14px;background:rgba(255,255,255,0.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--border);position:sticky;top:60px;z-index:90;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .mobile-anchors::-webkit-scrollbar{display:none}
+  .mobile-anchors a{white-space:nowrap;font-size:12px;font-weight:600;color:var(--text-muted);background:#f1f5f9;padding:5px 12px;border-radius:100px;text-decoration:none}
+  .mobile-anchors a:active,.mobile-anchors a:focus{background:var(--primary);color:#fff}
 }
 </style></head><body>
 
@@ -271,11 +284,23 @@ pre{padding:16px;overflow-x:auto;color:#e2e8f0;font-family:ui-monospace,SFMono-R
       <span>Epay Pages 接入文档</span>
     </a>
     <div class="nav-links">
-      <a href="/">首页</a>
-      <a href="/user.html">商户中心</a>
+      <a href="/">返回首页</a>
       <a href="/admin.html">管理后台</a>
+      <a class="nav-btn" href="/user.html">商户中心</a>
     </div>
   </div>
+</div>
+
+<div class="mobile-anchors">
+  <a href="#about">架构说明</a>
+  <a href="#quickstart">快速开始</a>
+  <a href="#plugin">方式A:插件</a>
+  <a href="#direct">方式B:API</a>
+  <a href="#notify">异步回调</a>
+  <a href="#query">查询退款</a>
+  <a href="#paypage">码牌收款</a>
+  <a href="#monitors">监控端</a>
+  <a href="#faq">常见问题</a>
 </div>
 
 <div class="layout">
