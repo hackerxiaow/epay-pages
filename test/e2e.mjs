@@ -549,7 +549,7 @@ async function main() {
     let wshopList = (await (await fetch(BASE + '/admin/api/users', { headers: { Cookie: adminCookie } })).json()).data.list;
     const wshop = wshopList.find((u) => u.username === 'wshop');
     const seen = new Set();
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 40 && !(seen.has('epay') && seen.has('f2f')); i++) {
       const a = { pid: String(wshop.uid), type: 'alipay', out_trade_no: 'W' + i + Date.now(), notify_url: `http://127.0.0.1:${MERCHANT_PORT}/notify`, return_url: `http://127.0.0.1:${MERCHANT_PORT}/return`, name: '轮询', money: '1.01' };
       r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...a, sign: signParams(a, wshop.key), sign_type: 'MD5' }) });
       j = await r.json();

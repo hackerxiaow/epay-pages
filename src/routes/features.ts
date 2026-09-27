@@ -108,30 +108,114 @@ features.get('/paygo/:uid', async (c) => {
 
 // ==================== 文档页 ====================
 features.get('/doc', (c) => {
-  return c.html(`<!DOCTYPE html><html lang="zh-cn"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>接入文档</title>
-<style>body{font-family:sans-serif;max-width:860px;margin:30px auto;padding:0 18px;color:#333;line-height:1.8}h2{color:#337ab7;border-bottom:2px solid #eee;padding-bottom:6px}code,pre{background:#f5f7f9;border-radius:4px;padding:2px 6px;font-size:13px}pre{padding:14px;overflow:auto;border:1px solid #eee}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #e5e5e5;padding:8px 10px;text-align:left}th{background:#f5f7f9}</style></head><body>
-<h1>商户接入文档（彩虹易支付协议兼容）</h1>
-<h2>1. 创建支付订单</h2>
-<p>请求 <code>GET/POST /submit.php</code>（浏览器跳转）或 <code>/mapi.php</code>（返回 JSON）：</p>
-<table><tr><th>参数</th><th>说明</th></tr>
-<tr><td>pid</td><td>商户ID</td></tr><tr><td>type</td><td>alipay / wxpay / usdt …（以平台开放为准）</td></tr>
-<tr><td>out_trade_no</td><td>商户订单号，唯一</td></tr><tr><td>notify_url</td><td>异步通知地址</td></tr>
-<tr><td>return_url</td><td>支付完成跳转地址</td></tr><tr><td>name</td><td>商品名称</td></tr>
-<tr><td>money</td><td>金额（元，两位小数）</td></tr><tr><td>sign</td><td>签名（见下）</td></tr>
-<tr><td>sign_type</td><td>MD5 或 RSA</td></tr></table>
-<h2>2. 签名规则</h2>
-<p>参数按 <b>key ASCII 升序</b> 排列，排除 <code>sign / sign_type / 空值</code>，以 <code>k=v&</code> 拼接后：</p>
-<pre>MD5：md5(拼接串 + 商户密钥)
-RSA：SHA256withRSA(拼接串)，商户在后台绑定公钥</pre>
-<h2>3. 异步通知</h2>
-<p>平台 GET 请求 <code>notify_url</code>，携带 <code>pid, trade_no, out_trade_no, type, name, money, trade_status=TRADE_SUCCESS, sign</code>，验签通过请输出 <code>success</code>（原样小写），否则平台最多重试 5 次。</p>
-<h2>4. 订单查询 / 退款</h2>
-<pre>查询：GET /api.php?act=order&pid=&key=商户密钥&trade_no=
-退款：POST /api.php?act=refundapi  (trade_no, money, key=md5(trade_no+系统密钥+trade_no))</pre>
-<h2>5. mapi.php 返回</h2>
-<pre>{"code":1, "trade_no":"...", "payurl":"跳转链接", "qrcode":"二维码内容"}</pre>
-<p style="color:#999">更多能力（码牌收款 /pay/&lt;uid&gt;、余额结算、RSA 接入）请在商户中心查看。</p>
-</body></html>`);
+  const codeP = (body: string) => `<pre>${body.replace(/</g, '&lt;')}</pre>`;
+  return c.html(`<!DOCTYPE html><html lang="zh-cn"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>接入文档 - Epay Pages (Cloudflare 版)</title>
+<link href="/assets/css/bootstrap.min.css" rel="stylesheet"/>
+<style>
+body{padding-top:60px;font-family:"Microsoft YaHei",-apple-system,sans-serif;background:#f5f6f7;color:#333}
+.navbar-default{background-color:#337ab7;border-color:#2e6da4}
+.navbar-default .navbar-brand{color:#fff}
+pre{background:#282c34;color:#abb2bf;border-radius:6px;padding:14px;font-size:12px;overflow:auto;border:none}
+table{font-size:13px} td,th{vertical-align:middle!important}
+.sec{margin-bottom:34px}
+.tip{background:#fcf8e3;border:1px solid #faebcc;border-radius:4px;padding:10px 14px;font-size:13px;color:#8a6d3b}
+</style></head><body>
+<nav class="navbar navbar-fixed-top navbar-default"><div class="container">
+<div class="navbar-header"><a class="navbar-brand" href="/">Epay Pages 接入文档</a></div>
+<ul class="nav navbar-nav navbar-right"><li><a href="/user.html">商户中心</a></li><li><a href="/admin.html">管理后台</a></li></ul>
+</div></nav>
+<div class="container">
+<div class="sec"><h2>系统说明</h2>
+<p>本系统为 <b>彩虹易支付协议兼容</b> 的聚合收款网关，基于 Cloudflare Pages + D1 构建（<b>非 PHP 程序</b>，无需虚拟主机/宝塔）。
+你只需要在商户中心拿到 <code>PID</code> 与 <code>商户密钥</code>，任何支持"易支付"的程序填入三件套即可收款；自有系统可用下方任意语言直连。</p>
+</div>
+
+<div class="sec"><h2>快速开始（三步）</h2>
+<ol>
+<li><b>拿凭据</b>：商户中心 <code>/user.html</code> 注册/登录 → 首页查看 商户ID(PID) 与 商户密钥(key)</li>
+<li><b>后台配通道</b>：管理员在 支付渠道 添加渠道并启用，然后在 系统设置 的"类型→渠道映射"填写，例如 <code>{"alipay":1,"wxpay":2,"qqpay":3,"usdt":4}</code>（值=渠道ID，可填多个逗号分隔做加权轮询）</li>
+<li><b>开始收款</b>：按下方任一方式对接；没有网站也可以直接用码牌收款页 <code>/pay/你的PID</code></li>
+</ol>
+<p>支付方式类型：<code>alipay</code> 支付宝 · <code>wxpay</code> 微信 · <code>qqpay</code> QQ · <code>usdt</code> USDT（以平台开放为准）</p>
+</div>
+
+<div class="sec"><h2>方式A：现成易支付插件（推荐）</h2>
+<p>WordPress/发卡/独角数卡等程序自带"易支付"插件，填三样：</p>
+<table class="table table-bordered"><tr><th>插件字段</th><th>填什么</th></tr>
+<tr><td>网关/接口地址</td><td><code>https://你的站点域名</code></td></tr>
+<tr><td>商户ID(pid)</td><td>商户中心显示的数字 ID</td></tr>
+<tr><td>商户密钥(key)</td><td>商户中心显示的 32 位密钥</td></tr></table>
+</div>
+
+<div class="sec"><h2>方式B：直连下单</h2>
+<p><b>创建订单</b>：请求 <code>GET/POST /submit.php</code>（浏览器跳转收银台）或 <code>/mapi.php</code>（返回 JSON：code/payurl/qrcode/trade_no）</p>
+<table class="table table-bordered"><tr><th>参数</th><th>必填</th><th>说明</th></tr>
+<tr><td>pid</td><td>是</td><td>商户ID</td></tr>
+<tr><td>type</td><td>是</td><td>支付方式</td></tr>
+<tr><td>out_trade_no</td><td>是</td><td>商户订单号(唯一)</td></tr>
+<tr><td>notify_url</td><td>是</td><td>异步通知地址(公网可访问)</td></tr>
+<tr><td>return_url</td><td>否</td><td>支付完成同步跳转</td></tr>
+<tr><td>name</td><td>是</td><td>商品名称</td></tr>
+<tr><td>money</td><td>是</td><td>金额(元, 两位小数)</td></tr>
+<tr><td>sign / sign_type</td><td>是</td><td>签名 / MD5 或 RSA</td></tr></table>
+<h4>签名规则</h4>
+<p>参数按 key ASCII 升序，排除 <code>sign/sign_type/空值</code>，<code>k=v&amp;</code> 拼接后：<b>MD5</b> = md5(拼接串+商户密钥)；<b>RSA</b> = SHA256withRSA(拼接串)，公钥在后台绑定，平台通知也用 RSA 回签。</p>
+${codeP(`// Node.js 下单示例
+const crypto = require('crypto');
+const gw = 'https://你的站点';
+const key = '商户密钥';
+const p = { pid: '1', type: 'alipay', out_trade_no: 'NO' + Date.now(),
+  notify_url: 'https://你的网站/notify', return_url: 'https://你的网站/ok',
+  name: '商品', money: '9.99' };
+const str = Object.keys(p).filter(k => p[k] !== '').sort()
+  .map(k => k + '=' + p[k]).join('&');
+const sign = crypto.createHash('md5').update(str + key).digest('hex');
+const qs = new URLSearchParams({ ...p, sign, sign_type: 'MD5' }).toString();
+// 302 跳转: gw + '/submit.php?' + qs   (mapi.php 同参数 POST 返回 JSON)`)}
+${codeP(`# Python 验证异步通知 (notify)
+# 平台 GET 你的 notify_url?pid=&trade_no=&out_trade_no=&type=&name=&money=&trade_status=TRADE_SUCCESS&sign=&sign_type=MD5
+from urllib.parse import parse_qsl, urlsplit
+import hashlib
+def verify(params, key):
+    items = sorted((k, v) for k, v in params.items() if k not in ('sign', 'sign_type') and v != '')
+    s = '&'.join(f'{k}={v}' for k, v in items)
+    return hashlib.md5((s + key).encode()).hexdigest() == params['sign']
+# 验签通过后输出 success (原样小写), 否则平台最多重试 5 次`)}
+</div>
+
+<div class="sec"><h2>订单查询 / 退款</h2>
+${codeP(`# 查询 (商户密钥方式)
+GET /api.php?act=order&pid=商户ID&key=商户密钥&trade_no=平台订单号
+# 查询 (系统签名方式)
+GET /api.php?act=order&trade_no=平台订单号&sign=md5(系统密钥+订单号+系统密钥)
+# 退款 (POST 表单)
+POST /api.php?act=refundapi   trade_no=平台订单号 & money=金额 & key=md5(订单号+系统密钥+订单号)`)}
+</div>
+
+<div class="sec"><h2>码牌收款（无需网站）</h2>
+<p>收款页：<code>/pay/你的PID</code>，买家输入金额选择支付方式即出收银台。把链接生成二维码打印即成"码牌"。</p>
+</div>
+
+<div class="sec"><h2>监控端（个人码到账确认）</h2>
+<table class="table table-bordered">
+<tr><th>端</th><th>方案</th></tr>
+<tr><td>安卓</td><td><code>agent/android</code> 源码，GitHub Actions 自动打包 APK</td></tr>
+<tr><td>Win/Mac/Linux</td><td><code>agent/desktop/vmq_agent.py</code>（通知库/dbus/支付宝账单源）</td></tr>
+<tr><td>QQ</td><td>NapCat/LLOneBot 协议端 HTTP 上报地址填 <code>/onebot/report?token=后台onebot_token</code>；或后台 <code>qqbill</code> 账单轮询渠道</td></tr>
+<tr><td>支付宝免挂</td><td>后台 <code>alipaybill</code> 渠道：填开放平台 APPID+密钥(免CK推荐) 或网页 Cookie</td></tr>
+<tr><td>iOS</td><td>系统限制无法后台监听，请用免CK/账单轮询渠道</td></tr></table>
+</div>
+
+<div class="sec"><h2>常见问题</h2>
+<ol>
+<li><b>提示"签名错误"</b>：检查排序是否 ASCII 升序、是否漏排除 sign/sign_type、空值是否参与、密钥是否复制完整</li>
+<li><b>订单一直待支付</b>：对应渠道未启用/映射缺失；Cookie 或监控端掉线；notify_url 不可公网访问</li>
+<li><b>回调收不到</b>：notify_url 必须公网可访问且返回正文 <code>success</code>；平台最多重试 5 次</li>
+<li><b>想收 USDT/QQ</b>：后台添加 BEpusdt(USDT) 或 qqbill/QQ 渠道，并更新类型映射</li>
+</ol>
+</div>
+</div></body></html>`);
 });
 
 // ==================== 管理端扩展 ====================
