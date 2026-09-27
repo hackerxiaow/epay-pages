@@ -241,26 +241,33 @@ async function loadChannels(){
     <td><button class="btn btn-primary btn-xs" onclick="editChannel(${c.id})">编辑</button>
         <button class="btn btn-danger btn-xs" onclick="delChannel(${c.id})">删除</button></td></tr>`).join(''));
 }
+let EDIT_CFG = {};
 function editChannel(id){
-  const p = PLUGINS.reduce((a,b)=>a, null);
   const c = id?CHANNELS_CACHE.find(x=>x.id===id):null;
-  const plugin = c?PLUGINS.find(x=>x.id===c.plugin):PLUGINS[0];
-  const cfg = c?JSON.parse(c.config||'{}'):{};
+  EDIT_CFG = c?JSON.parse(c.config||'{}'):{};
   $('#modal-content').html(`<div class="modal-header"><h4 class="modal-title">${id?'编辑':'添加'}渠道</h4></div>
   <div class="modal-body">
-    <div class="form-group"><label>插件类型</label><select id="ch-plugin" class="form-control" ${id?'disabled':''}>
+    <div class="form-group"><label>插件类型 (切换后下方参数表单会跟着变)</label><select id="ch-plugin" class="form-control" onchange="renderChCfg()">
       ${PLUGINS.map(pl=>`<option value="${pl.id}" ${c&&c.plugin===pl.id?'selected':''}>${pl.name} (${pl.id})</option>`).join('')}</select></div>
     <div class="form-group"><label>渠道名称</label><input id="ch-name" class="form-control" value="${c?c.name:''}"></div>
     <div class="form-group"><label>状态</label><select id="ch-status" class="form-control">
       <option value="1" ${!c||c.status===1?'selected':''}>启用</option><option value="0" ${c&&c.status===0?'selected':''}>停用</option></select></div>
-    ${plugin?plugin.inputs.map(i=>`<div class="form-group"><label>${i.label}${i.required?' *':''}</label>${i.multiline?`<textarea class="form-control ch-cfg" data-k="${i.name}" rows="4">${cfg[i.name]||''}</textarea>`:`<input class="form-control ch-cfg" data-k="${i.name}" value="${cfg[i.name]||''}">`}</div>`).join(''):''}
+    <div id="ch-cfg-area"></div>
     <div class="row"><div class="col-xs-4"><div class="form-group"><label>轮询权重</label><input id="ch-weight" class="form-control" value="${c?(c.weight||1):1}"></div></div>
-    <div class="col-xs-4"><div class="form-group"><label>单笔最低(元)</label><input id="ch-paymin" class="form-control" value="${cfg.paymin||''}"></div></div>
-    <div class="col-xs-4"><div class="form-group"><label>单笔最高(元)</label><input id="ch-paymax" class="form-control" value="${cfg.paymax||''}"></div></div></div>
+    <div class="col-xs-4"><div class="form-group"><label>单笔最低(元)</label><input id="ch-paymin" class="form-control" value="${EDIT_CFG.paymin||''}"></div></div>
+    <div class="col-xs-4"><div class="form-group"><label>单笔最高(元)</label><input id="ch-paymax" class="form-control" value="${EDIT_CFG.paymax||''}"></div></div></div>
   </div>
   <div class="modal-footer"><button class="btn btn-default" data-dismiss="modal">取消</button>
   <button class="btn btn-primary" onclick="saveChannel(${id})">保存</button></div>`);
+  renderChCfg();
   $('#modal').modal('show');
+}
+function renderChCfg(){
+  const pl = PLUGINS.find(x=>x.id===$('#ch-plugin').val());
+  $('#ch-cfg-area').html((pl?pl.inputs:[]).map(i=>
+    `<div class="form-group"><label>${i.label}${i.required?' *':''}</label>${i.multiline
+      ?`<textarea class="form-control ch-cfg" data-k="${i.name}" rows="4">${EDIT_CFG[i.name]||''}</textarea>`
+      :`<input class="form-control ch-cfg" data-k="${i.name}" value="${EDIT_CFG[i.name]||''}">`}</div>`).join(''));
 }
 let CHANNELS_CACHE = [];
 async function loadChannelsCache(){ const r = await api('/admin/api/channels'); CHANNELS_CACHE = r.data.list; }
