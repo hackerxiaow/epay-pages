@@ -899,7 +899,7 @@ async function main() {
     ok(j.code === 0 && j.data.merchants >= 3 && j.data.orders_all >= 10, '公开统计接口');
     r = await fetch(BASE + '/');
     j = await r.text();
-    ok(j.includes('三网收款') && j.includes('监控端下载') && j.includes('入驻商户'), '首页改版(仿码支付内容结构)');
+    ok(j.includes('三网聚合') && j.includes('监控端下载') && j.includes('入驻商户') && j.includes('比同行更优质'), '首页改版(码支付风格)');
 
   } catch (e) {
     fail++;
