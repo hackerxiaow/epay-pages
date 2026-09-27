@@ -50,7 +50,7 @@ export interface ChannelPlugin {
   id: string;
   name: string;
   types: string[];
-  inputs: { name: string; label: string; required?: boolean }[];
+  inputs: { name: string; label: string; required?: boolean; multiline?: boolean }[];
   createOrder(ctx: ChannelCtx): Promise<CreateOrderResult>;
   onNotify?(ctx: NotifyCtx): Promise<NotifyResult>;
   refund?(ctx: RefundCtx): Promise<{ ok: boolean; msg: string }>;

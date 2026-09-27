@@ -29,6 +29,56 @@ function signParams(params, key) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ---- 新增 mock 状态与工具 ----
+const WX_KEY = 'wxpaykey123456789012345678901234';
+const wxOrders = [];
+const alipayOrders = [];
+const emails = [];
+function signStr(params) {
+  return Object.keys(params)
+    .filter((k) => k !== 'sign' && k !== 'sign_type' && params[k] !== undefined && params[k] !== '')
+    .sort()
+    .map((k) => `${k}=${params[k]}`)
+    .join('&');
+}
+function wxSign(params, key) {
+  return md5(Object.keys(params).filter((k) => k !== 'sign' && params[k] !== '' && params[k] !== undefined).sort().map((k) => `${k}=${params[k]}`).join('&') + '&key=' + key).toUpperCase();
+}
+function parseXml(xml) {
+  const out = {};
+  const cdata = /<([a-zA-Z0-9_]+)><!\[CDATA\[([\s\S]*?)\]\]><\/\1>/g;
+  let m;
+  while ((m = cdata.exec(xml))) out[m[1]] = m[2];
+  if (Object.keys(out).length === 0) {
+    const plain = /<([a-zA-Z0-9_]+)>([^<]+)<\/\1>/g;
+    while ((m = plain.exec(xml))) out[m[1]] = m[2];
+  }
+  return out;
+}
+function toXml(params) {
+  return '<xml>' + Object.keys(params).map((k) => `<${k}><![CDATA[${params[k]}]]></${k}>`).join('') + '</xml>';
+}
+function postForm(url, params) {
+  return new Promise((resolve) => {
+    const u = new URL(url);
+    const req = http.request({ host: u.hostname, port: u.port, path: u.pathname + u.search, method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, (r) => {
+      let b = ''; r.on('data', (d) => (b += d)); r.on('end', () => resolve({ status: r.statusCode, body: b }));
+    });
+    req.on('error', () => resolve({ status: 0, body: '' }));
+    req.end(new URLSearchParams(params).toString());
+  });
+}
+function postXml(url, body) {
+  return new Promise((resolve) => {
+    const u = new URL(url);
+    const req = http.request({ host: u.hostname, port: u.port, path: u.pathname + u.search, method: 'POST', headers: { 'Content-Type': 'text/xml' } }, (r) => {
+      let b = ''; r.on('data', (d) => (b += d)); r.on('end', () => resolve({ status: r.statusCode, body: b }));
+    });
+    req.on('error', () => resolve({ status: 0, body: '' }));
+    req.end(body);
+  });
+}
+
 // ---------------- mock 上游易支付 ----------------
 const upstreamHits = []; // 收到的 mapi 下单
 async function mockUpstreamHandler(req, res) {
@@ -52,6 +102,56 @@ async function mockUpstreamHandler(req, res) {
       http.get(`${p.notify_url}?${qs}`, (r) => r.resume()).on('error', () => {});
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ code: 1, payurl: 'https://mock.up/pay/' + p.out_trade_no, qrcode: 'mockup:qrcode:' + p.out_trade_no }));
+    });
+    return;
+  }
+  if (u.pathname === '/pay/unifiedorder' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (d) => (body += d));
+    req.on('end', () => {
+      const p = parseXml(body);
+      const sign = p.sign; delete p.sign;
+      const valid = wxSign(p, WX_KEY) === sign;
+      wxOrders.push({ ...p, signValid: valid });
+      const n = { appid: p.appid, bank_type: 'CMB_CREDIT', cash_fee: p.total_fee, fee_type: 'CNY', is_subscribe: 'N', mch_id: p.mch_id, nonce_str: 'mocknonce', out_trade_no: p.out_trade_no, result_code: 'SUCCESS', return_code: 'SUCCESS', time_end: '20260927120000', total_fee: p.total_fee, trade_type: 'NATIVE', transaction_id: 'WXMOCK' + Date.now() };
+      n.sign = wxSign(n, WX_KEY);
+      if (p.notify_url) postXml(p.notify_url, toXml(n));
+      const resp = { return_code: 'SUCCESS', result_code: 'SUCCESS', appid: p.appid, mch_id: p.mch_id, nonce_str: 'mock', prepay_id: 'mockprepay', trade_type: 'NATIVE', code_url: 'weixin://wxpay/mock/' + p.out_trade_no };
+      resp.sign = wxSign(resp, WX_KEY);
+      res.writeHead(200, { 'Content-Type': 'text/xml' });
+      res.end(toXml(resp));
+    });
+    return;
+  }
+  if (u.pathname === '/gateway.do' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (d) => (body += d));
+    req.on('end', () => {
+      const p = Object.fromEntries(new URLSearchParams(body));
+      const sign = p.sign; delete p.sign; delete p.sign_type;
+      const valid = signParams(p, globalThis.__aliAppPub || '') === undefined; // RSA 用下方专门校验
+      globalThis.__lastAlipayReq = { ...p, rawSign: sign, rawStr: signStr(p) };
+      const inner = { code: '10000', msg: 'Success', out_trade_no: p.out_trade_no, qr_code: 'https://qr.alipay.com/mock_' + p.out_trade_no };
+      const innerStr = JSON.stringify(inner);
+      const respSign = crypto.createSign('RSA-SHA256').update(innerStr).sign(globalThis.__aliPriv, 'base64');
+      // 异步通知
+      if (globalThis.__aliNotifyUrl) {
+        const biz = JSON.parse(p.biz_content || '{}');
+        const n = { app_id: p.app_id, trade_no: 'ALIMOCK' + Date.now(), out_trade_no: biz.out_trade_no, total_amount: biz.total_amount, trade_status: 'TRADE_SUCCESS' };
+        const nsign = crypto.createSign('RSA-SHA256').update(signStr(n)).sign(globalThis.__aliPriv, 'base64');
+        postForm(globalThis.__aliNotifyUrl, { ...n, sign: nsign, sign_type: 'RSA2' });
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ alipay_trade_pre_create_response: inner, sign: respSign }));
+    });
+    return;
+  }
+  if (u.pathname === '/emailcode' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (d) => (body += d));
+    req.on('end', () => {
+      emails.push(JSON.parse(body));
+      res.writeHead(200); res.end('ok');
     });
     return;
   }
@@ -104,6 +204,7 @@ async function main() {
   execSync('node scripts/build.mjs', { cwd: process.cwd(), stdio: 'pipe' });
   execSync('rm -rf .wrangler/state/v3/d1', { cwd: process.cwd() });
   execSync('npx wrangler d1 execute epay-db --local --file=schema.sql', { cwd: process.cwd(), stdio: 'pipe' });
+  execSync('npx wrangler d1 execute epay-db --local --file=migrate-v2.sql', { cwd: process.cwd(), stdio: 'pipe' });
 
   // ---------- 启动 wrangler dev ----------
   console.log('启动 wrangler dev ...');
@@ -326,6 +427,221 @@ async function main() {
     ok(r.status === 200 && (await r.text()).includes('商户管理中心'), 'user.html 原版风格页面');
     r = await fetch(BASE + '/assets/vendor/jquery/3.4.1/jquery.min.js');
     ok(r.status === 200, '静态资源直出');
+
+    console.log('\n== 11. RSA2 商户接入 ==');
+    // 平台密钥对
+    r = await fetch(BASE + '/admin/api/rsa/generate', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: '{}' });
+    j = await r.json();
+    ok(j.code === 0 && j.data.publicPem.includes('PUBLIC KEY'), '平台RSA密钥对生成');
+    const platformPub = j.data.publicPem;
+    // 商户RSA
+    r = await fetch(BASE + '/admin/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ username: 'rsashop', password: 'rsa12345678' }) });
+    j = await r.json(); ok(j.code === 0, '创建RSA商户');
+    r = await fetch(BASE + '/admin/api/users', { headers: { Cookie: adminCookie } });
+    const rsaShop = (await r.json()).data.list.find((u) => u.username === 'rsashop');
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+    r = await fetch(BASE + '/admin/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ uid: rsaShop.uid, keytype: 1, publickey: publicKey }) });
+    ok((await r.json()).code === 0, '商户绑定RSA公钥');
+    // RSA 签名下单
+    const rsaArgs = { pid: String(rsaShop.uid), type: 'alipay', out_trade_no: 'RSASHOP' + Date.now(), notify_url: `http://127.0.0.1:${MERCHANT_PORT}/notify`, return_url: `http://127.0.0.1:${MERCHANT_PORT}/return`, name: 'RSA测试', money: '6.66' };
+    const rsaSignStr = signStr(rsaArgs);
+    const rsaSignB64 = crypto.createSign('RSA-SHA256').update(rsaSignStr).sign(privateKey, 'base64');
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...rsaArgs, sign: rsaSignB64, sign_type: 'RSA' }) });
+    j = await r.json();
+    ok(j.code === 1, 'RSA2 签名下单成功');
+    const rsaTradeNo = j.trade_no;
+    // 平台对 RSA 商户的通知应可由商户公钥体系验证: 平台私钥签名, 商户用平台公钥验证
+    await waitFor(async () => merchantNotifies.length >= 1 && merchantNotifies.some((x) => x.params.out_trade_no === rsaArgs.out_trade_no), 8000);
+    const rsaNotify = merchantNotifies.find((x) => x.params.out_trade_no === rsaArgs.out_trade_no);
+    if (rsaNotify) {
+      const { sign: ns, sign_type: nst, ...np } = rsaNotify.params;
+      const v = crypto.createVerify('RSA-SHA256').update(signStr(np)).verify(platformPub, ns, 'base64');
+      ok(v && nst === 'RSA', '平台对RSA商户的通知签名可验证 (sign_type=RSA)');
+    } else ok(false, 'RSA商户未收到通知');
+
+    console.log('\n== 12. 微信 Native 官方渠道 (V2, mock) ==');
+    r = await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ plugin: 'wxpaynative', name: '微信官方', config: { appid: 'wxmock123', mchid: '1900001', key: WX_KEY, api_base: `http://127.0.0.1:${UPSTREAM_PORT}` } }) });
+    ok((await r.json()).code === 0, '创建微信Native渠道');
+    r = await fetch(BASE + '/admin/api/channels', { headers: { Cookie: adminCookie } });
+    const wxCh = r.json ? null : null;
+    let channelsList = (await (await fetch(BASE + '/admin/api/channels', { headers: { Cookie: adminCookie } })).json()).data.list;
+    const wxChId = channelsList.find((x) => x.plugin === 'wxpaynative').id;
+    const f2fIdTmp = null;
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ channel_map: JSON.stringify({ alipay: 1, wxpay: wxChId }) }) });
+    const wxnArgs = { ...orderArgs, type: 'wxpay', out_trade_no: 'WXPAY' + Date.now(), money: '7.77' };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...wxnArgs, sign: signParams(wxnArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === 1 && j.qrcode.startsWith('weixin://'), '微信Native下单返回code_url');
+    ok(wxOrders.length >= 1 && wxOrders[0].signValid === true, '我方对微信下单签名正确(V2协议)');
+    ok(wxOrders[0].total_fee === '777' && wxOrders[0].body === '测试商品', '金额分/商品名正确');
+    await waitFor(async () => merchantNotifies.some((x) => x.params.out_trade_no === wxnArgs.out_trade_no), 8000);
+    const wxNotify = merchantNotifies.find((x) => x.params.out_trade_no === wxnArgs.out_trade_no);
+    ok(wxNotify && wxNotify.signValid, '微信回调→订单支付→商户通知成功');
+
+    console.log('\n== 13. 支付宝当面付 (官方协议, mock) ==');
+    const aliApp = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+    const aliSrv = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+    globalThis.__aliAppPub = aliApp.publicKey;
+    globalThis.__aliPriv = aliSrv.privateKey;
+    const f2fNotifyUrl = `${BASE.replace('127.0.0.1:8787', '127.0.0.1:8787')}/channel/notify/alipayf2f/0`;
+    r = await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ plugin: 'alipayf2f', name: '当面付', config: { appid: '20210001', private_key: aliApp.privateKey, alipay_public_key: aliSrv.publicKey, gateway: `http://127.0.0.1:${UPSTREAM_PORT}/gateway.do`, enable_transfer: '1' } }) });
+    ok((await r.json()).code === 0, '创建当面付渠道');
+    channelsList = (await (await fetch(BASE + '/admin/api/channels', { headers: { Cookie: adminCookie } })).json()).data.list;
+    const f2fChId = channelsList.find((x) => x.plugin === 'alipayf2f').id;
+    globalThis.__aliNotifyUrl = `${BASE}/channel/notify/alipayf2f/${f2fChId}`;
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ channel_map: JSON.stringify({ alipay: f2fChId, wxpay: wxChId }) }) });
+    const f2fArgs = { ...orderArgs, type: 'alipay', out_trade_no: 'F2F' + Date.now(), money: '8.88' };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...f2fArgs, sign: signParams(f2fArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    if (j.code !== 1) console.log('   [debug f2f mapi]', JSON.stringify(j));
+    ok(j.code === 1 && j.qrcode.startsWith('https://qr.alipay.com'), '当面付下单返回二维码');
+    if (globalThis.__lastAlipayReq) console.log('   [debug aliReq keys]', Object.keys(globalThis.__lastAlipayReq).join(','), '| biz_content =', globalThis.__lastAlipayReq.biz_content);
+    const aliReq = globalThis.__lastAlipayReq;
+    const aliVerify = crypto.createVerify('RSA-SHA256').update(aliReq.rawStr).verify(aliApp.publicKey, aliReq.rawSign, 'base64');
+    ok(aliVerify && aliReq.method === 'alipay.trade.pre.create', '我方对支付宝请求RSA2签名正确');
+    ok(JSON.parse(aliReq.biz_content).out_trade_no === j.trade_no && JSON.parse(aliReq.biz_content).total_amount === '8.88', 'biz_content 参数正确 (平台单号/金额)');
+    await waitFor(async () => merchantNotifies.some((x) => x.params.out_trade_no === f2fArgs.out_trade_no), 8000);
+    ok(merchantNotifies.some((x) => x.params.out_trade_no === f2fArgs.out_trade_no), '支付宝回调→订单支付→商户通知成功');
+
+    console.log('\n== 14. 渠道加权轮询 ==');
+    // f2f 权重3, epay 权重1
+    const epayChId = channelsList.find((x) => x.plugin === 'epay').id;
+    const f2fCfg = JSON.parse(channelsList.find((x) => x.plugin === 'alipayf2f').config);
+    await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ id: f2fChId, plugin: 'alipayf2f', name: '当面付', config: f2fCfg, weight: 3 }) });
+    await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ id: epayChId, plugin: 'epay', name: '测试上游', config: { url: `http://127.0.0.1:${UPSTREAM_PORT}`, pid: '1000', key: UPSTREAM_KEY }, weight: 1 }) });
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ channel_map: JSON.stringify({ alipay: `${epayChId},${f2fChId}`, wxpay: wxChId }) }) });
+    // 独立商户 wshop 承接轮询订单, 不污染 testshop 余额断言
+    await fetch(BASE + '/user/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'wshop', password: 'wshop123456' }) });
+    let wshopList = (await (await fetch(BASE + '/admin/api/users', { headers: { Cookie: adminCookie } })).json()).data.list;
+    const wshop = wshopList.find((u) => u.username === 'wshop');
+    const seen = new Set();
+    for (let i = 0; i < 10; i++) {
+      const a = { pid: String(wshop.uid), type: 'alipay', out_trade_no: 'W' + i + Date.now(), notify_url: `http://127.0.0.1:${MERCHANT_PORT}/notify`, return_url: `http://127.0.0.1:${MERCHANT_PORT}/return`, name: '轮询', money: '1.01' };
+      r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...a, sign: signParams(a, wshop.key), sign_type: 'MD5' }) });
+      j = await r.json();
+      if (j.code === 1) seen.add(j.payurl ? 'epay' : 'f2f');
+    }
+    ok(seen.has('epay') && seen.has('f2f'), '多渠道加权轮询生效 (两种渠道均命中)');
+
+    console.log('\n== 15. 风控: 黑名单 / 域名白名单 ==');
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ blacklist: '127.0.0.1' }) });
+    const blArgs = { ...orderArgs, out_trade_no: 'BL' + Date.now() };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...blArgs, sign: signParams(blArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === -1 && j.msg === '请求被拒绝', 'IP黑名单拦截');
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ blacklist: '' }) });
+    await fetch(BASE + '/admin/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ uid: shop.uid, domain: 'shop.com' }) });
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ auth_domain: '1' }) });
+    const dmArgs = { ...orderArgs, out_trade_no: 'DM' + Date.now() };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', body: new URLSearchParams({ ...dmArgs, sign: signParams(dmArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === -1 && j.msg === '来源域名未授权', '域名白名单: 未授权来源被拒');
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { Referer: 'http://shop.com/buy' }, body: new URLSearchParams({ ...dmArgs, out_trade_no: 'DM2' + Date.now(), sign: signParams({ ...dmArgs, out_trade_no: 'DM2' + Date.now() }, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === 1, '域名白名单: 授权来源放行');
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ auth_domain: '0' }) });
+
+    console.log('\n== 16. 分组费率 + 邀请返利 ==');
+    r = await fetch(BASE + '/admin/api/groups', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ name: 'VIP', rate: 10 }) });
+    j = await r.json(); ok(j.code === 0, '创建费率分组');
+    r = await fetch(BASE + '/admin/api/groups', { headers: { Cookie: adminCookie } });
+    const vipGid = (await r.json()).data.find((g) => g.name === 'VIP').id;
+    // 邀请注册
+    r = await fetch(BASE + '/user/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'invshop', password: 'inv1234567', invite: 'testshop' }) });
+    j = await r.json(); ok(j.code === 0, '邀请注册成功');
+    const invCookie = (r.headers.get('set-cookie') || '').split(';')[0];
+    r = await fetch(BASE + '/admin/api/users', { headers: { Cookie: adminCookie } });
+    const invUid = (await r.json()).data.list.find((u) => u.username === 'invshop').uid;
+    await fetch(BASE + '/admin/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ uid: invUid, gid: vipGid }) });
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ invite_rate: '10' }) });
+    // invshop 10.00 订单 (微信渠道已由 mock 支付)
+    const invArgs = { pid: String(invUid), type: 'wxpay', out_trade_no: 'INV' + Date.now(), notify_url: `http://127.0.0.1:${MERCHANT_PORT}/notify`, return_url: `http://127.0.0.1:${MERCHANT_PORT}/return`, name: '费率测试', money: '10.00' };
+    // invshop key 用管理员接口拿
+    r = await fetch(BASE + '/admin/api/users', { headers: { Cookie: adminCookie } });
+    const invKey = (await r.json()).data.list.find((u) => u.username === 'invshop').key;
+    const invArgs2 = { ...invArgs, sign: signParams(invArgs, invKey) };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(invArgs2) });
+    j = await r.json();
+    ok(j.code === 1, '费率分组商户下单成功');
+    await waitFor(async () => merchantNotifies.some((x) => x.params.out_trade_no === invArgs.out_trade_no), 8000);
+    r = await fetch(BASE + '/user/api/me', { headers: { Cookie: invCookie } });
+    j = await r.json();
+    ok(j.data.money === '9.00', `分组费率10%扣手续费后入账9.00 (got ${j.data.money})`);
+    r = await fetch(BASE + '/user/api/me', { headers: { Cookie: merchantCookie } });
+    j = await r.json();
+    const expectRebate = 12.34 + 12.34 + 7.77 + 8.88 + 1.00; // 退款后余额 + VMQ单 + 微信单 + 面付单 + 白名单放行单 + 返利1.00
+    ok(Math.abs(parseFloat(j.data.money) - expectRebate) < 0.001, `邀请返利10%到账 (got ${j.data.money}, expect ${expectRebate.toFixed(2)})`);
+
+    console.log('\n== 17. 实名认证 ==');
+    r = await fetch(BASE + '/user/api/cert', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: invCookie }, body: JSON.stringify({ name: '张三', idcard: '350100199001011234' }) });
+    j = await r.json(); ok(j.code === 0, '提交实名认证');
+    r = await fetch(BASE + '/admin/api/certs', { headers: { Cookie: adminCookie } });
+    const certs = (await r.json()).data;
+    ok(certs.some((x) => x.uid === invUid && x.cert_name === '张三'), '管理员可见待审实名');
+    await fetch(BASE + '/admin/api/certs/review', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ uid: invUid, status: 2 }) });
+    r = await fetch(BASE + '/user/api/me', { headers: { Cookie: invCookie } });
+    j = await r.json();
+    ok(j.data.cert === 2, '实名审核通过');
+    // 强制实名拦截未认证商户
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ cert_force: '1' }) });
+    const cfArgs = { ...orderArgs, out_trade_no: 'CF' + Date.now() };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...cfArgs, sign: signParams(cfArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === -1 && j.msg.includes('实名'), '强制实名: 未认证商户下单被拒');
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ cert_force: '0' }) });
+
+    console.log('\n== 18. 验证码 / 邮箱 / 杂项 ==');
+    r = await fetch(BASE + '/api/captcha');
+    j = await r.json();
+    const capMatch = j.data.svg.match(/(\d+) \+ (\d+)/);
+    ok(j.code === 0 && capMatch, '图形验证码接口');
+    // 图形验证码注册
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ captcha_open: '1' }) });
+    r = await fetch(BASE + '/api/captcha');
+    j = await r.json();
+    const m2 = j.data.svg.match(/(\d+) \+ (\d+)/);
+    r = await fetch(BASE + '/user/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'capshop', password: 'cap1234567', captcha_id: j.data.id, captcha_answer: String(Number(m2[1]) + Number(m2[2])) }) });
+    j = await r.json();
+    ok(j.code === 0, '图形验证码注册成功');
+    r = await fetch(BASE + '/user/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'capshop2', password: 'cap1234567', captcha_id: 'x', captcha_answer: '9' }) });
+    j = await r.json();
+    ok(j.code === -1, '图形验证码错误被拒');
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ captcha_open: '0' }) });
+    // 邮箱验证码
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ email_verify: '1', email_webhook: `http://127.0.0.1:${UPSTREAM_PORT}/emailcode` }) });
+    r = await fetch(BASE + '/user/api/sendcode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@b.com' }) });
+    j = await r.json();
+    ok(j.code === 0, '邮箱验证码发送');
+    await waitFor(async () => emails.length >= 1, 6000);
+    ok(emails.length >= 1 && emails[emails.length - 1].email === 'a@b.com' && /^\d{6}$/.test(emails[emails.length - 1].code), 'webhook 收到验证码');
+    r = await fetch(BASE + '/user/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'mailshop', password: 'mail1234567', email: 'a@b.com', email_code: emails[emails.length - 1].code }) });
+    j = await r.json();
+    ok(j.code === 0, '邮箱验证码注册成功');
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ email_verify: '0' }) });
+    // 公告
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ announcement: '系统测试公告ABC' }) });
+    r = await fetch(BASE + '/api/announcement');
+    j = await r.json();
+    ok(j.data === '系统测试公告ABC', '平台公告');
+    // 文档页/码牌
+    r = await fetch(BASE + '/doc');
+    ok(r.status === 200 && (await r.text()).includes('接入文档'), '接入文档页');
+    r = await fetch(BASE + `/pay/${shop.uid}`);
+    ok(r.status === 200 && (await r.text()).includes('输入金额'), '码牌收款页');
+    r = await fetch(BASE + `/paygo/${shop.uid}?money=3.21&type=alipay`, { redirect: 'manual' });
+    ok(r.status === 302 && (r.headers.get('location') || '').startsWith('/cashier/'), '码牌下单跳收银台');
+    // 导出/统计/趋势
+    r = await fetch(BASE + '/admin/api/export?days=30', { headers: { Cookie: adminCookie } });
+    const csv = await r.text();
+    ok(csv.includes('平台订单号') && csv.split('\n').length > 3, '订单导出CSV');
+    r = await fetch(BASE + '/admin/api/buyerstat', { headers: { Cookie: adminCookie } });
+    j = await r.json();
+    ok(j.code === 0 && j.data.length >= 1, '支付用户统计');
+    r = await fetch(BASE + '/admin/api/trend', { headers: { Cookie: adminCookie } });
+    j = await r.json();
+    ok(j.code === 0, '7日趋势');
+
   } catch (e) {
     fail++;
     failures.push('异常中断: ' + e.message);

@@ -36,6 +36,8 @@
         <li><a href="#channels"><i class="fa fa-plug"></i> 支付渠道</a></li>
         <li><a href="#users"><i class="fa fa-user"></i> 商户管理</a></li>
         <li><a href="#settles"><i class="fa fa-cloud"></i> 结算管理</a></li>
+        <li><a href="#groups"><i class="fa fa-object-group"></i> 商户分组</a></li>
+        <li><a href="#buyers"><i class="fa fa-pie-chart"></i> 用户统计</a></li>
         <li><a href="#setting"><i class="fa fa-cog"></i> 系统设置</a></li>
       </ul>
       <ul class="nav navbar-nav navbar-right">
@@ -62,6 +64,7 @@
   <!-- 首页 -->
   <div id="page-home" class="page">
     <div class="row" id="stats"></div>
+    <div class="panel panel-default"><div class="panel-heading">近7日趋势</div><div class="panel-body" id="trend"></div></div>
   </div>
 
   <!-- 订单 -->
@@ -81,7 +84,7 @@
         <thead><tr><th>平台订单号</th><th>商户订单号</th><th>商户</th><th>类型</th><th>名称</th><th>金额</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
         <tbody id="o-list"></tbody>
       </table></div>
-      <div class="panel-footer" id="o-pager"></div>
+      <div class="panel-footer clearfix" id="o-pager"><a class="btn btn-default btn-sm pull-right" href="/admin/api/export?days=30"><i class="fa fa-download"></i> 导出近30天CSV</a></div>
     </div>
   </div>
 
@@ -110,11 +113,30 @@
   <!-- 结算 -->
   <div id="page-settles" class="page" style="display:none">
     <div class="panel panel-default">
-      <div class="panel-heading">结算申请</div>
+      <div class="panel-heading">结算申请 <span class="text-muted" style="font-size:12px">（通过=人工已打款；若渠道启用自动打款，可点「自动打款」调支付宝转账）</span></div>
       <div class="table-responsive"><table class="table table-striped">
         <thead><tr><th>ID</th><th>商户</th><th>金额</th><th>时间</th><th>状态</th><th>操作</th></tr></thead>
         <tbody id="s-list"></tbody>
       </table></div>
+    </div>
+  </div>
+
+  <!-- 分组 -->
+  <div id="page-groups" class="page" style="display:none">
+    <div class="panel panel-default">
+      <div class="panel-heading"><button class="btn btn-success btn-xs pull-right" onclick="editGroup(0)"><i class="fa fa-plus"></i> 添加分组</button>商户分组（费率%）</div>
+      <div class="table-responsive"><table class="table table-striped">
+        <thead><tr><th>ID</th><th>名称</th><th>费率%</th><th>操作</th></tr></thead>
+        <tbody id="g-list"></tbody></table></div>
+    </div>
+  </div>
+
+  <!-- 用户统计 -->
+  <div id="page-buyers" class="page" style="display:none">
+    <div class="panel panel-default"><div class="panel-heading">支付用户统计 (按IP)</div>
+      <div class="table-responsive"><table class="table table-striped">
+        <thead><tr><th>IP</th><th>订单数</th><th>累计金额</th><th>最近支付</th></tr></thead>
+        <tbody id="b-list"></tbody></table></div>
     </div>
   </div>
 
@@ -126,7 +148,21 @@
         <div class="form-group"><label>开放商户注册 (1开/0关)</label><input id="cfg-reg_open" class="form-control"></div>
         <div class="form-group"><label>类型→渠道ID 映射 (JSON, 如 {"alipay":1,"wxpay":1,"usdt":2})</label><textarea id="cfg-channel_map" class="form-control" rows="3"></textarea></div>
         <div class="form-group"><label>通知重试 Token (cron 用)</label><input id="cfg-cron_token" class="form-control"></div>
+        <div class="form-group"><label>平台公告 (商户中心展示, 留空关闭)</label><input id="cfg-announcement" class="form-control"></div>
+        <h4>风控</h4>
+        <div class="form-group"><label>IP黑名单 (逗号分隔, 支持前缀如 10.0.)</label><textarea id="cfg-blacklist" class="form-control" rows="2"></textarea></div>
+        <div class="form-group"><label>拦截地区 (CF国家码, 逗号分隔如 US,IN; 留空不启用)</label><input id="cfg-block_countries" class="form-control"></div>
+        <div class="form-group"><label>商户域名白名单开关 (1开)</label><input id="cfg-auth_domain" class="form-control"></div>
+        <div class="form-group"><label>强制实名认证 (1开)</label><input id="cfg-cert_force" class="form-control"></div>
+        <h4>注册与验证</h4>
+        <div class="form-group"><label>邀请返利% (0关闭)</label><input id="cfg-invite_rate" class="form-control"></div>
+        <div class="form-group"><label>图形验证码 (1开)</label><input id="cfg-captcha_open" class="form-control"></div>
+        <div class="form-group"><label>邮箱验证 (1开)</label><input id="cfg-email_verify" class="form-control"></div>
+        <div class="form-group"><label>邮箱验证码 Webhook (POST {email, code})</label><input id="cfg-email_webhook" class="form-control"></div>
         <button class="btn btn-primary" onclick="saveConfig()">保存设置</button>
+        <h4>平台 RSA 密钥 (商户 RSA 接入)</h4>
+        <button class="btn btn-warning btn-sm" onclick="genRsa()"><i class="fa fa-key"></i> 生成平台RSA密钥对</button>
+        <pre id="rsa-pub" style="display:none;white-space:pre-wrap;word-break:break-all"></pre>
       </div>
     </div>
   </div>
@@ -162,6 +198,9 @@ async function route(){
   if(h==='users') loadUsers();
   if(h==='settles') loadSettles();
   if(h==='setting') loadConfig();
+  if(h==='groups') loadGroups();
+  if(h==='buyers') loadBuyers();
+  loadTrend();
 }
 window.addEventListener('hashchange', route);
 
@@ -214,7 +253,10 @@ function editChannel(id){
     <div class="form-group"><label>渠道名称</label><input id="ch-name" class="form-control" value="${c?c.name:''}"></div>
     <div class="form-group"><label>状态</label><select id="ch-status" class="form-control">
       <option value="1" ${!c||c.status===1?'selected':''}>启用</option><option value="0" ${c&&c.status===0?'selected':''}>停用</option></select></div>
-    ${plugin?plugin.inputs.map(i=>`<div class="form-group"><label>${i.label}${i.required?' *':''}</label><input class="form-control ch-cfg" data-k="${i.name}" value="${cfg[i.name]||''}"></div>`).join(''):''}
+    ${plugin?plugin.inputs.map(i=>`<div class="form-group"><label>${i.label}${i.required?' *':''}</label>${i.multiline?`<textarea class="form-control ch-cfg" data-k="${i.name}" rows="4">${cfg[i.name]||''}</textarea>`:`<input class="form-control ch-cfg" data-k="${i.name}" value="${cfg[i.name]||''}">`}</div>`).join(''):''}
+    <div class="row"><div class="col-xs-4"><div class="form-group"><label>轮询权重</label><input id="ch-weight" class="form-control" value="${c?(c.weight||1):1}"></div></div>
+    <div class="col-xs-4"><div class="form-group"><label>单笔最低(元)</label><input id="ch-paymin" class="form-control" value="${cfg.paymin||''}"></div></div>
+    <div class="col-xs-4"><div class="form-group"><label>单笔最高(元)</label><input id="ch-paymax" class="form-control" value="${cfg.paymax||''}"></div></div></div>
   </div>
   <div class="modal-footer"><button class="btn btn-default" data-dismiss="modal">取消</button>
   <button class="btn btn-primary" onclick="saveChannel(${id})">保存</button></div>`);
@@ -253,7 +295,12 @@ function editUser(uid, username, money, status){
     <div class="form-group"><label>${uid?'重置密码(留空不改)':'密码'}</label><input id="us-pwd" class="form-control"></div>
     ${uid?`<div class="form-group"><label>余额(元)</label><input id="us-money" class="form-control" value="${(money/100).toFixed(2)}"></div>
     <div class="form-group"><label>状态</label><select id="us-status" class="form-control">
-      <option value="1" ${status===1?'selected':''}>正常</option><option value="0" ${status===0?'selected':''}>禁用</option></select></div>`:''}
+      <option value="1" ${status===1?'selected':''}>正常</option><option value="0" ${status===0?'selected':''}>禁用</option></select></div>
+    <div class="form-group"><label>签名方式</label><select id="us-keytype" class="form-control">
+      <option value="0">MD5</option><option value="1">RSA (下方填商户公钥)</option></select></div>
+    <div class="form-group"><label>商户RSA公钥 (PEM)</label><textarea id="us-pubkey" class="form-control" rows="3"></textarea></div>
+    <div class="form-group"><label>域名白名单 (逗号分隔, 留空不限)</label><input id="us-domain" class="form-control"></div>
+    <div class="form-group"><label>商户分组ID</label><input id="us-gid" class="form-control" value="1"></div>`:''}
   </div>
   <div class="modal-footer"><button class="btn btn-default" data-dismiss="modal">取消</button>
   <button class="btn btn-primary" onclick="saveUser(${uid})">保存</button></div>`);
@@ -273,10 +320,59 @@ async function loadSettles(){
     <td>${new Date(s.addtime*1000).toLocaleString()}</td>
     <td>${s.status===0?'<span class="status-0">待处理</span>':s.status===1?'<span class="status-1">已打款</span>':'<span class="status-2">已驳回</span>'}</td>
     <td>${s.status===0?`<button class="btn btn-success btn-xs" onclick="review(${s.id},1)">通过</button>
+    <button class="btn btn-primary btn-xs" onclick="autopay(${s.id})">自动打款</button>
     <button class="btn btn-warning btn-xs" onclick="review(${s.id},2)">驳回</button>`:''}</td></tr>`).join(''));
 }
 async function review(id, status){
   await api('/admin/api/settles/review',{method:'POST',body:JSON.stringify({id,status})}); loadSettles();
+}
+async function autopay(id){
+  const account = prompt('对方支付宝账号(手机号/邮箱):');
+  if(!account) return;
+  const name = prompt('对方真实姓名(用于校验, 可空):')||'';
+  const r = await api('/admin/api/settles/pay',{method:'POST',body:JSON.stringify({id,account,name})});
+  alert(r.msg||r.code); loadSettles();
+}
+async function loadTrend(){
+  try{
+    const r = await api('/admin/api/trend');
+    const d = r.data||[];
+    if(!d.length){ jQuery('#trend').html('<span class="text-muted">暂无数据</span>'); return; }
+    const max = Math.max.apply(null, d.map(x=>Number(x.n)||1));
+    jQuery('#trend').html(d.map(x=>`<div style="display:inline-block;text-align:center;margin:0 10px">
+      <div style="width:38px;height:${Math.max(4,Math.round((Number(x.n)/max)*120))}px;background:#337ab7;display:inline-block"></div>
+      <div style="font-size:12px;color:#666">${x.d?x.d.slice(5):''}</div>
+      <div style="font-size:12px;color:#999">${x.n}单</div></div>`).join(''));
+  }catch(e){}
+}
+async function loadGroups(){
+  const r = await api('/admin/api/groups');
+  jQuery('#g-list').html(r.data.map(g=>`<tr><td>${g.id}</td><td>${g.name}</td><td>${g.rate}%</td>
+    <td><button class="btn btn-primary btn-xs" onclick="editGroup(${g.id},'${g.name}',${g.rate})">编辑</button>
+    ${g.id!==1?`<button class="btn btn-danger btn-xs" onclick="delGroup(${g.id})">删除</button>`:''}</td></tr>`).join(''));
+}
+function editGroup(id, name, rate){
+  jQuery('#modal-content').html(`<div class="modal-header"><h4 class="modal-title">${id?'编辑分组':'添加分组'}</h4></div>
+  <div class="modal-body"><div class="form-group"><label>名称</label><input id="gr-name" class="form-control" value="${name||''}"></div>
+  <div class="form-group"><label>费率% (商户收款手续费)</label><input id="gr-rate" class="form-control" value="${rate!=null?rate:0}"></div></div>
+  <div class="modal-footer"><button class="btn btn-default" data-dismiss="modal">取消</button>
+  <button class="btn btn-primary" onclick="saveGroup(${id})">保存</button></div>`);
+  jQuery('#modal').modal('show');
+}
+async function saveGroup(id){
+  const r = await api('/admin/api/groups',{method:'POST',body:JSON.stringify({id:id||undefined,name:jQuery('#gr-name').val(),rate:parseFloat(jQuery('#gr-rate').val()||'0')})});
+  if(r.code===0){jQuery('#modal').modal('hide');loadGroups();}else alert(r.msg);
+}
+async function delGroup(id){ if(!confirm('确认删除分组 '+id+'？其商户将回到默认分组'))return;
+  await api('/admin/api/groups/delete',{method:'POST',body:JSON.stringify({id})}); loadGroups(); }
+async function loadBuyers(){
+  const r = await api('/admin/api/buyerstat');
+  jQuery('#b-list').html(r.data.map(b=>`<tr><td>${b.ip}</td><td>${b.n}</td><td>¥${(b.total/100).toFixed(2)}</td>
+    <td>${new Date(b.last*1000).toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="4" class="text-muted text-center">暂无数据</td></tr>');
+}
+async function genRsa(){
+  const r = await api('/admin/api/rsa/generate',{method:'POST',body:'{}'});
+  if(r.code===0){ jQuery('#rsa-pub').show().text(r.data.publicPem); alert('已生成并保存平台RSA密钥对'); } else alert(r.msg);
 }
 async function loadConfig(){
   const r = await api('/admin/api/config');

@@ -122,7 +122,7 @@ admin.get('/api/channels', async (c) => {
 });
 
 admin.post('/api/channels', async (c) => {
-  const b = await c.req.json<{ id?: number; plugin: string; name: string; status?: number; config: string; types: string[] }>();
+  const b = await c.req.json<{ id?: number; plugin: string; name: string; status?: number; config: string; types: string[]; weight?: number; paymin?: string; paymax?: string }>();
   const plugin = listPlugins().find((p) => p.id === b.plugin);
   if (!plugin) return c.json({ code: -1, msg: '插件不存在' });
   let configObj: Record<string, string> = {};
@@ -133,12 +133,16 @@ admin.post('/api/channels', async (c) => {
     if (inp.required && !configObj[inp.name]) return c.json({ code: -1, msg: `${inp.label} 不能为空` });
   }
   if (b.id) {
-    await c.env.DB.prepare('UPDATE channels SET plugin=?, name=?, status=?, config=?, types=? WHERE id=?')
-      .bind(b.plugin, b.name, b.status === 0 ? 0 : 1, JSON.stringify(configObj), JSON.stringify(b.types || plugin.types), b.id)
+    if (b.paymin !== undefined) configObj.paymin = b.paymin;
+    if (b.paymax !== undefined) configObj.paymax = b.paymax;
+    await c.env.DB.prepare('UPDATE channels SET plugin=?, name=?, status=?, config=?, types=?, weight=? WHERE id=?')
+      .bind(b.plugin, b.name, b.status === 0 ? 0 : 1, JSON.stringify(configObj), JSON.stringify(b.types || plugin.types), Math.max(1, b.weight || 1), b.id)
       .run();
   } else {
-    await c.env.DB.prepare('INSERT INTO channels (plugin, name, status, config, types) VALUES (?,?,?,?,?)')
-      .bind(b.plugin, b.name, b.status === 0 ? 0 : 1, JSON.stringify(configObj), JSON.stringify(b.types || plugin.types))
+    if (b.paymin !== undefined) configObj.paymin = b.paymin;
+    if (b.paymax !== undefined) configObj.paymax = b.paymax;
+    await c.env.DB.prepare('INSERT INTO channels (plugin, name, status, config, types, weight) VALUES (?,?,?,?,?,?)')
+      .bind(b.plugin, b.name, b.status === 0 ? 0 : 1, JSON.stringify(configObj), JSON.stringify(b.types || plugin.types), Math.max(1, b.weight || 1))
       .run();
   }
   return c.json({ code: 0 });
@@ -153,7 +157,7 @@ admin.post('/api/channels/delete', async (c) => {
 // ---------- 商户 ----------
 admin.get('/api/users', async (c) => {
   const page = Math.max(1, parseInt(c.req.query('page') || '1', 10));
-  const { results } = await c.env.DB.prepare('SELECT uid, gid, username, email, key, money, status, regtime FROM users ORDER BY uid LIMIT ? OFFSET ?')
+  const { results } = await c.env.DB.prepare('SELECT uid, gid, username, email, key, money, status, regtime, keytype, domain, cert FROM users ORDER BY uid LIMIT ? OFFSET ?')
     .bind(20, (page - 1) * 20)
     .all();
   const total = await c.env.DB.prepare('SELECT COUNT(*) n FROM users').first<{ n: number }>();
@@ -161,7 +165,10 @@ admin.get('/api/users', async (c) => {
 });
 
 admin.post('/api/users', async (c) => {
-  const b = await c.req.json<{ uid?: number; username?: string; password?: string; status?: number; money?: number; reset_key?: boolean }>();
+  const b = await c.req.json<{
+    uid?: number; username?: string; password?: string; status?: number; money?: number; reset_key?: boolean;
+    keytype?: number; publickey?: string; domain?: string; gid?: number;
+  }>();
   if (b.uid) {
     if (b.password) {
       await c.env.DB.prepare('UPDATE users SET password=? WHERE uid=?').bind(await hashPassword(b.password), b.uid).run();
@@ -174,6 +181,18 @@ admin.post('/api/users', async (c) => {
     }
     if (b.reset_key) {
       await c.env.DB.prepare('UPDATE users SET key=? WHERE uid=?').bind(randomStr(32), b.uid).run();
+    }
+    if (b.keytype !== undefined) {
+      await c.env.DB.prepare('UPDATE users SET keytype=? WHERE uid=?').bind(b.keytype, b.uid).run();
+    }
+    if (b.publickey !== undefined) {
+      await c.env.DB.prepare('UPDATE users SET publickey=? WHERE uid=?').bind(b.publickey, b.uid).run();
+    }
+    if (b.domain !== undefined) {
+      await c.env.DB.prepare('UPDATE users SET domain=? WHERE uid=?').bind(b.domain, b.uid).run();
+    }
+    if (b.gid !== undefined) {
+      await c.env.DB.prepare('UPDATE users SET gid=? WHERE uid=?').bind(b.gid, b.uid).run();
     }
     return c.json({ code: 0 });
   }

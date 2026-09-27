@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import { Bindings, getCookie, makeSessionCookie, parseSessionCookie, verifyPassword } from '../lib/auth';
 import { getConfig, getConfigAll, getUserByUid, OrderRow, setConfig } from '../lib/db';
-import { buildSign, md5, verifySign } from '../lib/sign';
+import { md5 } from '../lib/sign';
 import { cents2str, genTradeNo, now, str2cents } from '../lib/util';
 import { getExternalOrigin, getPlugin, parseChannel } from '../lib/channel';
+import { buildReturnUrl, verifyMerchantSign } from '../lib/orderflow';
+import { resolveChannel, isBlacklisted } from '../lib/routing';
 
 export const proto = new Hono<{ Bindings: Bindings }>();
 
@@ -35,33 +37,81 @@ function collectParams(query: Record<string, string>): SubParams {
   };
 }
 
-async function createOrder(
+export interface DirectOrderOpts {
+  uid: number;
+  type: string;
+  money: number; // 分
+  name: string;
+  out_trade_no: string;
+  notify_url: string;
+  return_url: string;
+  skipRisk?: boolean; // 码牌等站内场景跳过来源风控
+}
+
+/** 站内直接下单 (码牌收款), 无需商户签名 */
+export async function createOrderDirect(
+  env: Bindings,
+  req: Request,
+  o: DirectOrderOpts
+): Promise<{ ok: boolean; msg: string; tradeNo?: string }> {
+  const user = await getUserByUid(env.DB, o.uid);
+  if (!user || user.status !== 1) return { ok: false, msg: '商户不存在或已被禁用' };
+  const conf = await getConfigAll(env.DB);
+  if (conf.cert_force === '1' && user.cert !== 2) return { ok: false, msg: '商户未完成实名认证' };
+  const clientIp = req.headers.get('cf-connecting-ip') || '';
+  if (!o.skipRisk && isBlacklisted(conf.blacklist || '', clientIp)) return { ok: false, msg: '请求被拒绝' };
+  const routed = await resolveChannel(env.DB, o.type, o.money);
+  if (!routed.ok) return { ok: false, msg: routed.msg || '无可用通道' };
+  const tradeNo = genTradeNo();
+  await env.DB.prepare(
+    'INSERT INTO orders (trade_no, out_trade_no, uid, type, channel, name, money, status, addtime, notify_url, return_url, domain, ip) VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?)'
+  )
+    .bind(tradeNo, o.out_trade_no, o.uid, o.type, routed.channelId!, o.name, o.money, now(), o.notify_url, o.return_url, '', clientIp)
+    .run();
+  return { ok: true, msg: 'ok', tradeNo };
+}
+
+/** 商户协议下单: 验签 + 风控 + 路由 + 落库 */
+export async function createOrder(
   env: Bindings,
   req: Request,
   p: SubParams
-): Promise<{ ok: boolean; msg: string; tradeNo?: string; mapi?: Record<string, unknown> }> {
+): Promise<{ ok: boolean; msg: string; tradeNo?: string }> {
   if (!p.pid || !p.type || !p.out_trade_no || !p.notify_url || !p.money) {
     return { ok: false, msg: '参数不完整' };
   }
-  if (p.sign_type !== 'MD5') return { ok: false, msg: '仅支持 MD5 签名' };
+  if (p.sign_type !== 'MD5' && p.sign_type !== 'RSA' && p.sign_type !== 'RSA2') {
+    return { ok: false, msg: '不支持的签名类型' };
+  }
   const uid = parseInt(p.pid, 10);
   const user = await getUserByUid(env.DB, uid);
   if (!user || user.status !== 1) return { ok: false, msg: '商户不存在或已被禁用' };
-  if (!verifySign(p as unknown as Record<string, string>, user.key, p.sign)) {
+  if (!(await verifyMerchantSign(user, p as unknown as Record<string, string>, p.sign))) {
     return { ok: false, msg: '签名错误' };
   }
   const money = str2cents(p.money);
   if (money <= 0) return { ok: false, msg: '金额错误' };
 
   const conf = await getConfigAll(env.DB);
-  let channelMap: Record<string, number> = {};
-  try {
-    channelMap = JSON.parse(conf.channel_map || '{}');
-  } catch {}
-  const channelId = channelMap[p.type];
-  if (!channelId) return { ok: false, msg: `支付方式 ${p.type} 未配置通道` };
-  const chRow = await env.DB.prepare('SELECT * FROM channels WHERE id=? AND status=1').bind(channelId).first();
-  if (!chRow) return { ok: false, msg: '支付通道不可用' };
+  // 实名强制
+  if (conf.cert_force === '1' && user.cert !== 2) return { ok: false, msg: '商户未完成实名认证' };
+  // 客户端 IP 与地区风控
+  const clientIp = req.headers.get('cf-connecting-ip') || '';
+  if (isBlacklisted(conf.blacklist || '', clientIp)) return { ok: false, msg: '请求被拒绝' };
+  const blocked = (conf.block_countries || '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+  const country = ((req as Request & { cf?: { country?: string } }).cf?.country || '').toUpperCase();
+  if (blocked.length && country && blocked.includes(country)) return { ok: false, msg: '请求被拒绝' };
+  // 域名白名单
+  if (conf.auth_domain === '1' && user.domain) {
+    const referer = req.headers.get('referer') || '';
+    const host = referer ? new URL(referer).hostname : '';
+    const allowed = user.domain.split(',').map((x) => x.trim()).filter(Boolean);
+    if (!host || !allowed.includes(host)) return { ok: false, msg: '来源域名未授权' };
+  }
+
+  const routed = await resolveChannel(env.DB, p.type, money);
+  if (!routed.ok) return { ok: false, msg: routed.msg || '无可用通道' };
+  const channelId = routed.channelId!;
 
   const tradeNo = genTradeNo();
   await env.DB.prepare(
@@ -199,25 +249,6 @@ proto.get('/payok/:tradeNo', async (c) => {
     `<meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;padding-top:60px"><h2 style="color:#1aad19">✔ 支付成功</h2><p>订单号 ${order.trade_no}</p></body>`
   );
 });
-
-async function buildReturnUrl(env: Bindings, order: OrderRow): Promise<string> {
-  if (!order.return_url) return '';
-  const user = await getUserByUid(env.DB, order.uid);
-  if (!user) return '';
-  const params: Record<string, string> = {
-    pid: String(order.uid),
-    trade_no: order.trade_no,
-    out_trade_no: order.out_trade_no || '',
-    type: order.type,
-    name: order.name || '',
-    money: cents2str(order.money),
-    trade_status: order.status === 1 || order.status === 3 ? 'TRADE_SUCCESS' : 'TRADE_CLOSED',
-  };
-  const sign = buildSign(params, user.key);
-  const qs = new URLSearchParams({ ...params, sign, sign_type: 'MD5' }).toString();
-  const sep = order.return_url.includes('?') ? '&' : '?';
-  return order.return_url + sep + qs;
-}
 
 // ---------- api.php 兼容 (订单查询 / 退款) ----------
 proto.all('/api.php', async (c) => {

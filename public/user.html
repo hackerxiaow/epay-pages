@@ -35,6 +35,8 @@
         <li><a href="#orders"><i class="fa fa-list"></i> 订单管理</a></li>
         <li><a href="#records"><i class="fa fa-rmb"></i> 收款流水</a></li>
         <li><a href="#settle"><i class="fa fa-cloud"></i> 申请结算</a></li>
+        <li><a href="#cert"><i class="fa fa-id-card"></i> 实名认证</a></li>
+        <li><a href="/doc" target="_blank"><i class="fa fa-book"></i> 接入文档</a></li>
       </ul>
       <ul class="nav navbar-nav navbar-right">
         <li><a href="javascript:logout()"><i class="fa fa-power-off"></i> 退出</a></li>
@@ -60,6 +62,15 @@
         <div id="tab-reg" class="tab-pane">
           <div class="form-group"><input id="ruser" class="form-control" placeholder="商户账号(字母数字)"></div>
           <div class="form-group"><input id="rpwd" type="password" class="form-control" placeholder="密码(≥6位)"></div>
+          <div class="form-group" id="reg-email-row" style="display:none">
+            <div class="input-group"><input id="remail" class="form-control" placeholder="邮箱">
+            <span class="input-group-btn"><button class="btn btn-default" onclick="sendCode()">发验证码</button></span></div>
+            <input id="remailcode" class="form-control" placeholder="邮箱验证码" style="margin-top:8px">
+          </div>
+          <div class="form-group" id="reg-captcha-row" style="display:none">
+            <div id="cap-svg" style="cursor:pointer" onclick="loadCaptcha()"></div>
+            <input id="rcaptcha" class="form-control" placeholder="计算结果" style="margin-top:8px">
+          </div>
           <button class="btn btn-success btn-block" onclick="reg()"><i class="fa fa-user-plus"></i> 注册</button>
         </div>
       </div>
@@ -75,9 +86,11 @@
         <div class="stat-num" id="m-balance"></div><div class="text-muted">账户余额 (元)</div>
       </div></div></div>
       <div class="col-md-6"><div class="panel panel-default"><div class="panel-body">
-        <p><b>商户ID (pid)：</b><span id="m-uid"></span></p>
+        <p><b>商户ID (pid)：</b><span id="m-uid"></span> <b>签名方式：</b><span id="m-keytype"></span> <b>费率：</b><span id="m-rate"></span></p>
         <p><b>商户密钥 (key)：</b><code id="m-key" style="word-break:break-all"></code></p>
-        <p class="text-muted">接入方式与彩虹易支付一致：/submit.php 提交，MD5 签名。</p>
+        <p><b>码牌收款页：</b><a id="m-paylink" target="_blank"></a> <b>实名状态：</b><span id="m-cert"></span></p>
+        <p class="text-muted">接入方式与彩虹易支付一致：/submit.php 提交，MD5/RSA 签名。详见<a href="/doc" target="_blank">接入文档</a>。</p>
+        <div id="m-announce" class="alert alert-info" style="display:none"></div>
       </div></div></div>
     </div>
   </div>
@@ -94,6 +107,16 @@
       <div class="table-responsive"><table class="table table-striped">
         <thead><tr><th>类型</th><th>金额</th><th>说明</th><th>时间</th></tr></thead>
         <tbody id="r-list"></tbody></table></div>
+    </div>
+  </div>
+  <div id="page-cert" class="page" style="display:none">
+    <div class="panel panel-default"><div class="panel-heading">实名认证</div>
+      <div class="panel-body">
+        <div class="form-group"><label>真实姓名</label><input id="ct-name" class="form-control"></div>
+        <div class="form-group"><label>证件号码</label><input id="ct-id" class="form-control"></div>
+        <button class="btn btn-success" onclick="submitCert()"><i class="fa fa-check"></i> 提交认证</button>
+        <p id="ct-msg" class="text-muted" style="margin-top:10px"></p>
+      </div>
     </div>
   </div>
   <div id="page-settle" class="page" style="display:none">
@@ -118,6 +141,11 @@ async function checkLogin(){
   const r = await api('/user/api/me');
   if(r.code===0){ $('#topnav,#mainview').show(); $('#loginview').hide();
     $('#m-balance').text('¥'+r.data.money); $('#m-uid').text(r.data.uid); $('#m-key').text(r.data.key);
+    $('#m-keytype').text(r.data.keytype===1?'RSA':'MD5'); $('#m-rate').text(r.data.rate+'%');
+    $('#m-cert').text(r.data.cert===2?'已认证':(r.data.cert===1?'审核中':'未认证'));
+    const payurl = location.origin + '/pay/' + r.data.uid;
+    $('#m-paylink').attr('href', payurl).text(payurl);
+    if(r.data.invite_uid) $('#m-announce').show().text('您由商户 #' + r.data.invite_uid + ' 邀请注册');
     route(); }
   else { $('#topnav,#mainview').hide(); $('#loginview').show(); }
 }
@@ -125,9 +153,24 @@ async function login(){
   const r = await api('/user/api/login',{method:'POST',body:JSON.stringify({username:$('#luser').val(),password:$('#lpwd').val()})});
   if(r.code===0){ checkLogin(); } else { $('#lmsg').text(r.msg); }
 }
+var capId = '';
+function loadCaptcha(){
+  api('/api/captcha').then(function(r){ if(r.code===0){ capId = r.data.id; jQuery('#cap-svg').html(r.data.svg); } });
+}
+function sendCode(){
+  api('/user/api/sendcode',{method:'POST',body:JSON.stringify({email:jQuery('#remail').val()})}).then(function(r){ jQuery('#lmsg').text(r.msg||'验证码已发送'); });
+}
+fetch('/api/regconfig').then(r=>r.json()).then(function(j){
+  if(j.code!==0) return;
+  if(j.data.captcha_open){ jQuery('#reg-captcha-row').show(); loadCaptcha(); }
+  if(j.data.email_verify){ jQuery('#reg-email-row').show(); }
+}).catch(function(){});
 async function reg(){
-  const r = await api('/user/api/register',{method:'POST',body:JSON.stringify({username:$('#ruser').val(),password:$('#rpwd').val()})});
-  if(r.code===0){ checkLogin(); } else { $('#lmsg').text(r.msg); }
+  const r = await api('/user/api/register',{method:'POST',body:JSON.stringify({
+    username:$('#ruser').val(),password:$('#rpwd').val(),
+    email:$('#remail').val()||undefined, email_code:$('#remailcode').val()||undefined,
+    captcha_id:capId||undefined, captcha_answer:$('#rcaptcha').val()||undefined })});
+  if(r.code===0){ checkLogin(); } else { $('#lmsg').text(r.msg); if(capId) loadCaptcha(); }
 }
 function logout(){ api('/user/api/logout',{method:'POST'}).then(checkLogin); }
 
@@ -135,7 +178,7 @@ async function route(){
   const h = location.hash.replace('#','') || 'home';
   $('.page').hide(); $('#page-'+h).show(); $('#navbar').removeClass('in');
   if(h==='home'){} if(h==='orders'){ myPage=1; loadOrders(1); }
-  if(h==='records') loadRecords(); if(h==='settle'){}
+  if(h==='records') loadRecords(); if(h==='settle'){} if(h==='cert'){}
 }
 window.addEventListener('hashchange', route);
 
@@ -159,6 +202,15 @@ async function applySettle(){
   $('#st-msg').text(r.code===0?'申请已提交，等待管理员打款':r.msg);
   if(r.code===0) checkLogin();
 }
+async function submitCert(){
+  const r = await api('/user/api/cert',{method:'POST',body:JSON.stringify({name:$('#ct-name').val(),idcard:$('#ct-id').val()})});
+  $('#ct-msg').text(r.msg||r.code);
+  if(r.code===0) checkLogin();
+}
+// 公告
+fetch('/api/announcement').then(r=>r.json()).then(j=>{
+  if(j.code===0 && j.data) $('#m-announce').show().text('平台公告：'+j.data);
+}).catch(()=>{});
 checkLogin();
 </script>
 </body>

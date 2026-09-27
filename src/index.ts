@@ -10,11 +10,16 @@ import { epayPlugin } from './lib/plugins/epay';
 import { vmqPlugin } from './lib/plugins/vmq';
 import { bepusdtPlugin } from './lib/plugins/bepusdt';
 import { xorpayPlugin } from './lib/plugins/xorpay';
+import { alipayF2fPlugin } from './lib/plugins/alipayf2f';
+import { wxpayNativePlugin } from './lib/plugins/wxpaynative';
+import { features } from './routes/features';
 
 registerPlugin(epayPlugin);
 registerPlugin(vmqPlugin);
 registerPlugin(bepusdtPlugin);
 registerPlugin(xorpayPlugin);
+registerPlugin(alipayF2fPlugin);
+registerPlugin(wxpayNativePlugin);
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -23,6 +28,7 @@ app.route('/', channelRoutes);
 app.route('/admin', admin);
 app.route('/user', user);
 app.route('/', misc);
+app.route('/', features);
 
 // 静态资源回退 (Pages Assets / Worker Assets)
 app.all('*', async (c) => {

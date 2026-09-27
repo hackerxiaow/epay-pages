@@ -35,6 +35,19 @@ export interface UserRow {
   mode: number;
   status: number;
   regtime: number;
+  keytype?: number;
+  publickey?: string;
+  domain?: string;
+  invite_uid?: number;
+  cert?: number;
+  cert_name?: string;
+  cert_no?: string;
+}
+
+export interface GroupRow {
+  id: number;
+  name: string;
+  rate: number;
 }
 
 export async function getUserByUid(db: D1Database, uid: number): Promise<UserRow | null> {
@@ -88,20 +101,44 @@ export async function markOrderPaid(
     .run();
   if (!res.meta.changes) return false;
 
-  // 商户余额即时入账 (即时到账核心)
-  const credit = await db
+  // 即时到账: 按分组费率扣手续费后入账
+  const conf = await db.prepare("SELECT k, v FROM config WHERE k IN ('invite_rate')").all<{ k: string; v: string }>();
+  const cfg: Record<string, string> = {};
+  for (const r of conf.results || []) cfg[r.k] = r.v;
+  const grp = await db.prepare('SELECT rate FROM groups WHERE id=(SELECT gid FROM users WHERE uid=?)').bind(order.uid).first<{ rate: number }>();
+  const rate = grp?.rate || 0;
+  const fee = Math.round((order.money * rate) / 100);
+  const credit = order.money - fee;
+
+  const upd = await db
     .prepare('UPDATE users SET money=money+? WHERE uid=?')
-    .bind(order.money, order.uid)
+    .bind(credit, order.uid)
     .run();
-  if (!credit.meta.changes) {
+  if (!upd.meta.changes) {
     // 回滚订单状态, 下次重试
     await db.prepare('UPDATE orders SET status=0, realmoney=0 WHERE trade_no=? AND status=1').bind(tradeNo).run();
     return false;
   }
   await db
     .prepare('INSERT INTO records (uid, type, money, addtime, note) VALUES (?,1,?,?,?)')
-    .bind(order.uid, order.money, now(), `订单 ${tradeNo} 收款`)
+    .bind(order.uid, credit, now(), `订单 ${tradeNo} 收款` + (fee > 0 ? `（手续费 ${(fee / 100).toFixed(2)}）` : ''))
     .run();
+
+  // 邀请返利
+  const inviteRate = parseFloat(cfg.invite_rate || '0');
+  if (inviteRate > 0) {
+    const inviter = await db.prepare('SELECT invite_uid FROM users WHERE uid=?').bind(order.uid).first<{ invite_uid: number }>();
+    if (inviter?.invite_uid) {
+      const rebate = Math.round((order.money * inviteRate) / 100);
+      if (rebate > 0) {
+        await db.prepare('UPDATE users SET money=money+? WHERE uid=?').bind(rebate, inviter.invite_uid).run();
+        await db
+          .prepare('INSERT INTO records (uid, type, money, addtime, note) VALUES (?,4,?,?,?)')
+          .bind(inviter.invite_uid, rebate, now(), `邀请商户 ${order.uid} 订单 ${tradeNo} 返利`)
+          .run();
+      }
+    }
+  }
   return true;
 }
 
