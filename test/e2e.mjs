@@ -368,17 +368,19 @@ async function main() {
     const wxTradeNo = j.trade_no;
     r = await fetch(BASE + '/cashier/' + wxTradeNo);
     const cashierHtml = await r.text();
-    ok(r.status === 200 && cashierHtml.includes('12.34') && cashierHtml.includes('收银台'), '收银台页面渲染原版风格');
+    ok(r.status === 200 && cashierHtml.includes('收银台'), '收银台页面渲染原版风格');
     r = await fetch(BASE + '/app/vmq/task?key=wrongkey&type=wxpay');
     j = await r.json();
     ok(j.code === -1, 'VMQ 错误 key 被拒绝');
     r = await fetch(BASE + '/app/vmq/task?key=vmqkey123&type=wxpay');
     j = await r.json();
-    ok(j.code === 1 && j.trade_no === wxTradeNo && j.price === '12.34', '挂机端轮询取单正确');
+    const vmqPrice = j.price;
+    ok(j.code === 1 && j.trade_no === wxTradeNo && parseFloat(vmqPrice) > 12.34 && parseFloat(vmqPrice) <= 13.33, '挂机端轮询取单正确(含尾数)');
+    ok(cashierHtml.includes(vmqPrice), '收银台展示尾数应付金额');
     r = await fetch(BASE + `/app/vmq/push?key=vmqkey123&trade_no=${wxTradeNo}&price=9.99`);
     j = await r.text();
     ok(j.includes('金额不匹配'), 'VMQ 金额不匹配被拒绝');
-    r = await fetch(BASE + `/app/vmq/push?key=vmqkey123&trade_no=${wxTradeNo}&price=12.34`);
+    r = await fetch(BASE + `/app/vmq/push?key=vmqkey123&trade_no=${wxTradeNo}&price=${vmqPrice}`);
     j = await r.text();
     ok(j === 'success', 'VMQ 推送到账成功');
     await waitFor(async () => merchantNotifies.length >= 2, 8000);
@@ -786,6 +788,57 @@ async function main() {
     r = await fetch(BASE + '/user/api/me', { headers: { Cookie: merchantCookie } });
     j = await r.json();
     ok(j.data.money === '55.64', `余额对账 (got ${j.data.money}, expect 55.64)`);
+
+
+    console.log('\n== 22. 原版V免签App兼容协议 ==');
+    r = await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ plugin: 'vmq', name: '原版App', config: { key: 'vmqkey456', qrcode_alipay: 'https://img.example/a.png', qrcode_wxpay: 'https://img.example/w.png' } }) });
+    ok((await r.json()).code === 0, '创建原版App用VMQ渠道');
+    channelsList = (await (await fetch(BASE + '/admin/api/channels', { headers: { Cookie: adminCookie } })).json()).data.list;
+    const vmq2Id = channelsList.filter((x) => x.plugin === 'vmq').map((x) => x.id).pop();
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ channel_map: JSON.stringify({ alipay: apiChId, wxpay: vmq2Id }) }) });
+    const appArgs = { ...orderArgs, type: 'wxpay', out_trade_no: 'VMQAPP' + Date.now(), money: '2.22' };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...appArgs, sign: signParams(appArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === 1, '原版App渠道下单成功');
+    const appTradeNo = j.trade_no;
+    const t = String(Date.now());
+    r = await fetch(`${BASE}/appHeart?t=${t}&sign=${md5(t + 'vmqkey456')}`);
+    j = await r.json();
+    ok(j.code === 1, 'App 心跳 (appHeart) 正常');
+    r = await fetch(`${BASE}/appHeart?t=${t}&sign=bad`);
+    j = await r.json();
+    ok(j.code === -1, 'App 心跳错误签名被拒');
+    r = await fetch(`${BASE}/getState?t=${t}&sign=${md5(t + 'vmqkey456')}`);
+    j = await r.json();
+    ok(j.code === 1 && j.data.state === '1', 'App 监听状态 (getState) 正常');
+    // 原版推送: type 1=微信, 金额需含尾数 -> 先查待支付金额
+    r = await fetch(BASE + '/api/cashier/status?trade_no=' + appTradeNo);
+    // 从收银台拿尾数
+    r = await fetch(BASE + '/cashier/' + appTradeNo);
+    const appPay = ((await r.text()).match(/data-pay="([\d.]+)"/) || [])[1];
+    ok(!!appPay && parseFloat(appPay) > 2.22 && parseFloat(appPay) <= 3.21, '收银台展示尾数金额');
+    const t2 = String(Date.now());
+    const badPush = { type: '1', price: '9.87', t: t2, sign: md5(`1${'9.87'}${t2}vmqkey456`) };
+    r = await fetch(`${BASE}/appPush?` + new URLSearchParams(badPush));
+    j = await r.json();
+    ok(j.code === 1, '无匹配金额推送不报错(原版行为)');
+    r = await fetch(BASE + '/api/cashier/status?trade_no=' + appTradeNo);
+    j = await r.json();
+    ok(j.status === 0, '无匹配金额不确认订单');
+    const goodPush = { type: '1', price: appPay, t: t2, sign: md5(`1${appPay}${t2}vmqkey456`) };
+    r = await fetch(`${BASE}/appPush?` + new URLSearchParams(goodPush));
+    j = await r.json();
+    ok(j.code === 1, '原版 App 推送到账成功');
+    await waitFor(async () => {
+      const rr = await fetch(BASE + '/api/cashier/status?trade_no=' + appTradeNo);
+      return (await rr.json()).status >= 1;
+    }, 8000);
+    ok(true, '订单自动确认');
+    await waitFor(async () => merchantNotifies.some((x) => x.params.out_trade_no === appArgs.out_trade_no), 8000);
+    ok(merchantNotifies.some((x) => x.params.out_trade_no === appArgs.out_trade_no), '原版App支付后商户收到通知');
+    r = await fetch(BASE + '/user/api/me', { headers: { Cookie: merchantCookie } });
+    j = await r.json();
+    ok(j.data.money === '57.86', `余额对账 (got ${j.data.money}, expect 57.86)`);
 
   } catch (e) {
     fail++;

@@ -108,7 +108,7 @@ function billTime(s: string): number {
 }
 
 /** 计算唯一尾数支付金额, 写入订单 ext */
-async function ensurePayAmount(env: Bindings, order: OrderRow, suffixOn: boolean): Promise<string> {
+export async function ensurePayAmount(env: Bindings, order: OrderRow, suffixOn: boolean): Promise<string> {
   let ext: Record<string, unknown> = {};
   try {
     ext = JSON.parse(order.ext || '{}');

@@ -23,7 +23,7 @@
 | 插件 | 说明 | 挂机 | 本地 e2e |
 |---|---|---|---|
 | `epay` | 易支付上游对接 | 免挂机 | ✅ 全流程 |
-| `vmq` | V免签挂机协议（/app/vmq/task、/app/vmq/push） | 需挂机端 | ✅ 全流程 |
+| `vmq` | V免签协议，**原版安卓App(szvone/vmqApk)直接兼容**（appHeart/appPush/getState 原样实现，金额尾数递增防撞单同原版） | 需挂机端 | ✅ 全流程 |
 | `alipayf2f` | 支付宝当面付官方直连（RSA2），支持结算自动打款 | 免挂机 | ✅ mock 全流程 |
 | `wxpaynative` | 微信扫码支付官方直连（V2/MD5） | 免挂机 | ✅ mock 全流程 |
 | `alipaybill` | 支付宝个人码账单轮询，双数据源：**免CK模式**（开放平台 APPID+RSA2 调官方账单API `accountlog.query`，密钥永不过期）/ Cookie模式，含免输金额转账链接（PID唤起支付宝带金额） | **免挂机** | ✅ mock 全流程 |
@@ -63,7 +63,7 @@ npx wrangler pages deploy dist --project-name epay-pages --branch main
 npm test    # wrangler pages dev + mock 上游易支付 + mock 商户端，55 项断言全流程闭环
 ```
 
-116 项断言覆盖：协议双签名（MD5/RSA 含负例）、四个渠道全流程（含支付宝 RSA2 响应验签、
+129 项断言覆盖：协议双签名（MD5/RSA 含负例）、四个渠道全流程（含支付宝 RSA2 响应验签、
 微信 V2 XML 验签、免CK官方账单API、码支付 submit 兼容）、加权轮询、风控、费率/返利、实名、验证码、导出/统计、幂等与回滚。
 
 ## 目录

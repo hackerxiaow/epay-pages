@@ -14,6 +14,7 @@ import { alipayF2fPlugin } from './lib/plugins/alipayf2f';
 import { wxpayNativePlugin } from './lib/plugins/wxpaynative';
 import { alipayBillPlugin } from './lib/plugins/alipaybill';
 import { features } from './routes/features';
+import { vmqCompat } from './routes/vmqcompat';
 
 registerPlugin(epayPlugin);
 registerPlugin(vmqPlugin);
@@ -31,6 +32,7 @@ app.route('/admin', admin);
 app.route('/user', user);
 app.route('/', misc);
 app.route('/', features);
+app.route('/', vmqCompat);
 
 // 静态资源回退 (Pages Assets / Worker Assets)
 app.all('*', async (c) => {
