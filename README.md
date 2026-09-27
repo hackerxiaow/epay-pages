@@ -26,8 +26,12 @@
 | `vmq` | V免签挂机协议（/app/vmq/task、/app/vmq/push） | 需挂机端 | ✅ 全流程 |
 | `alipayf2f` | 支付宝当面付官方直连（RSA2），支持结算自动打款 | 免挂机 | ✅ mock 全流程 |
 | `wxpaynative` | 微信扫码支付官方直连（V2/MD5） | 免挂机 | ✅ mock 全流程 |
+| `alipaybill` | 支付宝个人码账单轮询（V免签免挂机改造版：Cookie 拉账单+尾数匹配，挂机在 Cloudflare） | **免挂机** | ✅ mock 全流程 |
 | `bepusdt` | BEpusdt USDT 收款 | 免挂机 | 线上联调 |
 | `xorpay` | XorPay 聚合（支付宝/微信） | 免挂机 | 线上联调 |
+
+> 个人收款推荐组合：`alipaybill`（免挂机主力）+ `vmq`（云手机挂机兜底）双保险；
+> Cookie 失效时轮询拿不到账单，订单保持待支付，可随时切 VMQ。
 
 ## 完整功能
 

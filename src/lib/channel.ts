@@ -23,6 +23,7 @@ export interface CreateOrderResult {
   msg?: string;
   payUrl?: string; // 跳转型: 上游收银台/支付链接
   qrContent?: string; // 展示型: 二维码内容 (收款码链接/转账链接)
+  payAmount?: string; // 展示型: 实际应付金额(含尾数, 与订单金额可能不同)
 }
 
 export interface NotifyCtx {

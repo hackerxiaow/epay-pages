@@ -209,7 +209,7 @@ proto.get('/cashier/:tradeNo', async (c) => {
       siteName: (await getConfig(c.env.DB, 'sitename')) || 'Epay',
       tradeNo: order.trade_no,
       orderName: order.name || '商品订单',
-      money: cents2str(order.money),
+      money: (pr.payAmount || cents2str(order.money)),
       type: order.type,
       qr,
       merchant: user?.username || String(order.uid),
@@ -218,11 +218,13 @@ proto.get('/cashier/:tradeNo', async (c) => {
   );
 });
 
-// 收银台轮询
+// 收银台轮询 (同时驱动账单懒轮询: 买家页面每2秒一次, 30秒节流)
 proto.get('/api/cashier/status', async (c) => {
   const tradeNo = c.req.query('trade_no') || '';
   const order = await loadOrder(c.env, tradeNo);
   if (!order) return c.json({ code: -1, msg: '订单不存在' });
+  const { pollAllBills } = await import('../lib/plugins/alipaybill');
+  c.executionCtx.waitUntil(pollAllBills(c.env));
   return c.json({ code: 0, status: order.status });
 });
 
@@ -329,6 +331,7 @@ function cashierPage(o: {
   merchant: string;
   err: string;
 }): string {
+  const isImg = /^https?:\/\/.+\.(png|jpe?g|gif|webp)(\?|$)/i.test(o.qr);
   const typeLabel = o.type === 'wxpay' ? '微信支付' : o.type === 'usdt' ? 'USDT支付' : '支付宝';
   const typeColor = o.type === 'wxpay' ? '#1aad19' : o.type === 'usdt' ? '#26a17b' : '#1678ff';
   return `<!DOCTYPE html><html lang="zh-cn"><head><meta charset="utf-8">
@@ -356,7 +359,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;ba
     ${o.err ? `<div class="err">${o.err}</div>` : `
     <div class="order-name">${o.orderName}</div>
     <div class="order-no">订单号：${o.tradeNo}</div>
-    ${o.qr ? `<div id="qrcode"></div><div class="pay-tip">请使用${o.type === 'usdt' ? '链上钱包' : '手机' + typeLabel}扫码支付</div>` : `<div class="pay-tip">请向上方账户转账 <b style="color:${typeColor}">¥${o.money}</b>，支付完成后本页自动跳转</div>`}
+    ${o.qr ? (isImg ? `<img src="${o.qr}" alt="收款码" style="width:200px;border-radius:8px">` : `<div id="qrcode"></div>`) : ''}
+    <div class="pay-tip" data-pay="${o.money}">${o.qr ? '请使用' + (o.type === 'usdt' ? '链上钱包' : '手机' + typeLabel) + '扫码' : '请转账'} <b style="color:${typeColor}">¥${o.money}</b>（金额含唯一尾数，请勿修改），完成后自动跳转</div>
     <div class="state" id="state">等待支付中…</div>`}
   </div>
 </div>

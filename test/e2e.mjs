@@ -34,6 +34,7 @@ const WX_KEY = 'wxpaykey123456789012345678901234';
 const wxOrders = [];
 const alipayOrders = [];
 const emails = [];
+const mockBills = []; // {id, timeStr, amount}
 function signStr(params) {
   return Object.keys(params)
     .filter((k) => k !== 'sign' && k !== 'sign_type' && params[k] !== undefined && params[k] !== '')
@@ -143,6 +144,22 @@ async function mockUpstreamHandler(req, res) {
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ alipay_trade_pre_create_response: inner, sign: respSign }));
+    });
+    return;
+  }
+  if (u.pathname === '/finance/record.htm') {
+    const rows = mockBills.map((b) => `<tr class="bill"><td class="time">${b.timeStr}</td><td class="amount">¥${b.amount}</td><td class="type">收入</td></tr>`).join('');
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`<html><body><table>${rows}</table></body></html>`);
+    return;
+  }
+  if (u.pathname === '/setbill' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (d) => (body += d));
+    req.on('end', () => {
+      const p = JSON.parse(body);
+      mockBills.push({ id: 'MOCKB' + Date.now(), timeStr: p.timeStr, amount: p.amount });
+      res.writeHead(200); res.end('ok');
     });
     return;
   }
@@ -641,6 +658,57 @@ async function main() {
     r = await fetch(BASE + '/admin/api/trend', { headers: { Cookie: adminCookie } });
     j = await r.json();
     ok(j.code === 0, '7日趋势');
+
+
+    console.log('\n== 19. 支付宝个人码账单轮询 (免挂机) ==');
+    r = await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ plugin: 'alipaybill', name: '个人码轮询', config: { cookie: 'mockcookie=1', bill_url: `http://127.0.0.1:${UPSTREAM_PORT}/finance/record.htm`, qrcode_alipay: 'https://img.example/aliqr.png', pay_suffix: '1' } }) });
+    ok((await r.json()).code === 0, '创建账单轮询渠道');
+    channelsList = (await (await fetch(BASE + '/admin/api/channels', { headers: { Cookie: adminCookie } })).json()).data.list;
+    const billChId = channelsList.find((x) => x.plugin === 'alipaybill').id;
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ channel_map: JSON.stringify({ alipay: billChId, wxpay: wxChId }) }) });
+    const billArgs = { ...orderArgs, out_trade_no: 'BILLT' + Date.now(), money: '5.54' };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...billArgs, sign: signParams(billArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === 1 && j.qrcode === 'https://img.example/aliqr.png', '轮询渠道下单返回收款码');
+    const billTradeNo = j.trade_no;
+    // 收银台应展示带尾数的应付金额
+    r = await fetch(BASE + '/cashier/' + billTradeNo);
+    const billCashier = await r.text();
+    const payMatch = billCashier.match(/data-pay="([\d.]+)"/);
+    const payVal = payMatch ? parseFloat(payMatch[1]) : 0;
+    ok(r.status === 200 && payVal >= 5.55 && payVal <= 6.53 && payVal !== 5.54, '收银台展示唯一尾数金额');
+    // 金额不匹配的账单不应触发支付
+    const bj = (d) => new Date(Date.now() + 8 * 3600000 + d).toISOString().slice(0, 19).replace('T', ' ');
+    await new Promise((resolve) => {
+      const u = new URL(`http://127.0.0.1:${UPSTREAM_PORT}/setbill`);
+      const rq = http.request({ host: u.hostname, port: u.port, path: u.pathname, method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res2) => { res2.resume(); resolve(); });
+      rq.end(JSON.stringify({ amount: '9.99', timeStr: bj(0) }));
+    });
+    r = await fetch(BASE + '/api/cashier/status?trade_no=' + billTradeNo);
+    j = await r.json();
+    await sleep(1500);
+    r = await fetch(BASE + '/api/cashier/status?trade_no=' + billTradeNo);
+    j = await r.json();
+    ok(j.status === 0, '不匹配金额不触发支付');
+    // 放入匹配尾数的账单 -> 轮询自动确认
+    await new Promise((resolve) => {
+      const u = new URL(`http://127.0.0.1:${UPSTREAM_PORT}/setbill`);
+      const rq = http.request({ host: u.hostname, port: u.port, path: u.pathname, method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res2) => { res2.resume(); resolve(); });
+      rq.end(JSON.stringify({ amount: payMatch[1], timeStr: bj(0) }));
+    });
+    await waitFor(async () => {
+      const rr = await fetch(BASE + '/api/cashier/status?trade_no=' + billTradeNo);
+      return (await rr.json()).status >= 1;
+    }, 15000);
+    r = await fetch(BASE + '/api/cashier/status?trade_no=' + billTradeNo);
+    j = await r.json();
+    ok(j.status === 1, '账单轮询自动确认订单 (免挂机)');
+    await waitFor(async () => merchantNotifies.some((x) => x.params.out_trade_no === billArgs.out_trade_no), 8000);
+    ok(merchantNotifies.some((x) => x.params.out_trade_no === billArgs.out_trade_no), '轮询支付后商户收到通知');
+    // 商户余额按原始订单金额入账 (尾数不计入商户)
+    r = await fetch(BASE + '/user/api/me', { headers: { Cookie: merchantCookie } });
+    j = await r.json();
+    ok(j.data.money === '47.87', `余额按订单原金额入账 (got ${j.data.money}, expect 47.87)`);
 
   } catch (e) {
     fail++;

@@ -12,6 +12,7 @@ import { bepusdtPlugin } from './lib/plugins/bepusdt';
 import { xorpayPlugin } from './lib/plugins/xorpay';
 import { alipayF2fPlugin } from './lib/plugins/alipayf2f';
 import { wxpayNativePlugin } from './lib/plugins/wxpaynative';
+import { alipayBillPlugin } from './lib/plugins/alipaybill';
 import { features } from './routes/features';
 
 registerPlugin(epayPlugin);
@@ -20,6 +21,7 @@ registerPlugin(bepusdtPlugin);
 registerPlugin(xorpayPlugin);
 registerPlugin(alipayF2fPlugin);
 registerPlugin(wxpayNativePlugin);
+registerPlugin(alipayBillPlugin);
 
 const app = new Hono<{ Bindings: Bindings }>();
 

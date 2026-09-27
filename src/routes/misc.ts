@@ -39,7 +39,10 @@ misc.get('/api/cron', async (c) => {
     await sendMerchantNotifySafe(c.env, order);
     ok++;
   }
-  return c.json({ code: 0, data: { retried: ok, time: now() } });
+  // 账单轮询 (支付宝个人码免挂机通道)
+  const { pollAllBills } = await import('../lib/plugins/alipaybill');
+  const billMatched = await pollAllBills(c.env);
+  return c.json({ code: 0, data: { retried: ok, bill_matched: billMatched, time: now() } });
 });
 
 // ---------- 首页 (原版风格落地页) ----------
