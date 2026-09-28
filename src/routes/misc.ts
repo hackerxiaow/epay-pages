@@ -42,7 +42,10 @@ misc.get('/api/cron', async (c) => {
   // 账单轮询 (支付宝个人码免挂机通道)
   const { pollAllBills } = await import('../lib/billpoll');
   const billMatched = await pollAllBills(c.env);
-  return c.json({ code: 0, data: { retried: ok, bill_matched: billMatched, time: now() } });
+  // 原生 USDT (TRC20 链上自动扫账)
+  const { pollAllTronOrders } = await import('../lib/tronusdt');
+  const tronMatched = await pollAllTronOrders(c.env);
+  return c.json({ code: 0, data: { retried: ok, bill_matched: billMatched, tron_matched: tronMatched, time: now() } });
 });
 
 // ---------- 首页 (现代 Fintech 极简轻奢美学重构) ----------

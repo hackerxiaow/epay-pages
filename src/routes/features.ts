@@ -490,27 +490,43 @@ trade_no=平台订单号&money=退款金额&key=md5(trade_no+系统KEY+trade_no)
     </div>
 
     <div class="section" id="usdt">
-      <h2>加密货币收款（USDT / BEpusdt 免挂机）</h2>
-      <p>加密货币收款走开源网关 <b>BEpusdt</b>（原 epusdt 的维护版，<code>v03413/BEpusdt</code>）：币直接进你自己的钱包，链上确认后自动回调本站订单，<b>无需任何挂机软件</b>，也没有第三方代收抽成。</p>
-      <p><b>服务地址与 Auth Key 都要你自己搭一套才有</b>（这是开源自建项目，没有公共服务器可以直接借用）。三步搞定：</p>
+      <h2>加密货币收款（USDT / TRC20 链上免挂）</h2>
+      <p>系统内置两种 USDT 收款模式，均支持<b>资金直接进你自己的私人钱包、无中间商抽成、无需手机常驻挂机</b>：</p>
+
       <div class="table-wrap">
         <table>
-          <thead><tr><th>步骤</th><th>操作</th></tr></thead>
+          <thead><tr><th>模式</th><th>适用场景</th><th>所需配置</th><th>优势</th></tr></thead>
           <tbody>
-            <tr><td><b>① 部署</b></td><td>在有公网 IP 的服务器执行：<br><code>docker run -d --name bepusdt -p 8000:8000 -v /root/bepusdt:/data v03413/bepusdt:latest</code></td></tr>
-            <tr><td><b>② 配钱包</b></td><td>浏览器打开 <code>http://服务器IP:8000</code> 初始化管理员账号，在「钱包管理」添加你的收款地址（如 TRC20）</td></tr>
-            <tr><td><b>③ 拿令牌</b></td><td>进入「系统管理 → 基本设置 → API 设置」，复制<b>对接令牌</b> ← 这就是后台要填的 Auth Key</td></tr>
+            <tr>
+              <td><b>🌟 模式一：原生内置对账（强烈推荐）</b></td>
+              <td>不想买服务器、不想折腾 Docker、只要收 USDT</td>
+              <td><b>仅需一个 TRC20 钱包地址 (T开头)</b></td>
+              <td><b>纯 Cloudflare 云端边缘直连波场主网</b>，真正零服务器、零挂机、开箱即用</td>
+            </tr>
+            <tr>
+              <td><b>模式二：自建 BEpusdt 网关</b></td>
+              <td>已有境外 VPS，需多公链支持或 BEpusdt 独立收银台</td>
+              <td>BEpusdt 服务地址 + API 对接令牌</td>
+              <td>独立网关架构，支持多代币/多链扩展</td>
+            </tr>
           </tbody>
         </table>
       </div>
-      <p>建议再套一层域名与 HTTPS（Nginx/Caddy 反代 8000 端口），然后把域名填到后台渠道的「服务地址」（例如 <code>https://pay.你的域名.com</code>）。</p>
-      <h3>在后台开通（3 步）</h3>
+
+      <h3>方式一：原生内置模式极简开通（仅需 2 步，最省心）</h3>
       <ol>
-        <li>「支付渠道 → 添加渠道」选插件 <code>BEpusdt(加密货币)</code>，填服务地址与对接令牌，状态选启用。</li>
-        <li>「系统设置 → 类型→渠道 映射」添加一行：支付方式选 <code>USDT 泰达币</code>，点选刚建的渠道，保存。</li>
-        <li>商户用 <code>type=usdt</code> 下单，买家会跳到 BEpusdt 官方收银台（带地址、金额、倒计时），链上确认后订单自动变已支付。</li>
+        <li>进「<b>支付渠道 → 添加渠道</b>」，插件类型选 <code>原生USDT(TRC20链上查账·零服务器免挂)</code>，填入你的 <b>TRC20 收款钱包地址</b>（如交易所充币地址或个人冷热钱包），状态选启用。</li>
+        <li>进「<b>系统设置 → 类型→渠道 映射</b>」，添加一行：支付方式选 <code>USDT 泰达币 (usdt)</code>，点选刚添加的渠道并保存。</li>
       </ol>
-      <p>本站与 BEpusdt 之间按下单/回调双向签名校验（非空参数按参数名 ASCII 升序拼 <code>key=value&amp;</code>，末尾追加令牌后取 MD5 小写），回调地址为 <code>https://您的域名/channel/notify/bepusdt/渠道ID</code>，无需手动配置。</p>
+      <p><b>执行机制</b>：商户下单 <code>type=usdt</code> 时，系统自动拉取实时汇率并追加 4 位防撞单微尾数（如 <code>13.6942 USDT</code>）；买家在收银台扫码或复制地址转账，波场主网出块后（通常 5~15 秒），系统自动检测并秒级核销订单！</p>
+
+      <h3>方式二：外部 BEpusdt 网关对接</h3>
+      <p>若自己在境外 VPS 通过 Docker 部署了 <code>v03413/BEpusdt</code> 独立网关：</p>
+      <ol>
+        <li>在服务器启动：<code>docker run -d --name bepusdt -p 8000:8000 -v /root/bepusdt:/data v03413/bepusdt:latest</code></li>
+        <li>进入 BEpusdt 后台配置钱包地址，在「系统管理 → 基本设置 → API 设置」复制<b>对接令牌</b>。</li>
+        <li>在 epay 后台渠道选 <code>BEpusdt(加密货币)</code>，填入服务域名与对接令牌即可。</li>
+      </ol>
     </div>
 
     <div class="section" id="monitors">

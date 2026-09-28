@@ -14,6 +14,7 @@ import { alipayF2fPlugin } from './lib/plugins/alipayf2f';
 import { wxpayNativePlugin } from './lib/plugins/wxpaynative';
 import { alipayBillPlugin } from './lib/plugins/alipaybill';
 import { qqBillPlugin } from './lib/plugins/qqbill';
+import { tronUsdtPlugin } from './lib/plugins/tronusdt';
 import { features } from './routes/features';
 import { vmqCompat } from './routes/vmqcompat';
 import { onebot } from './routes/onebot';
@@ -26,6 +27,7 @@ registerPlugin(alipayF2fPlugin);
 registerPlugin(wxpayNativePlugin);
 registerPlugin(alipayBillPlugin);
 registerPlugin(qqBillPlugin);
+registerPlugin(tronUsdtPlugin);
 
 const app = new Hono<{ Bindings: Bindings }>();
 

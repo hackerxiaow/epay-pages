@@ -25,6 +25,10 @@ export interface CreateOrderResult {
   qrContent?: string; // 展示型: 二维码内容 (收款码链接/转账链接)
   payAmount?: string; // 展示型: 实际应付金额(含尾数, 与订单金额可能不同)
   transferUrl?: string; // 支付宝转账 scheme (免输金额, 唤起APP)
+  coinAmount?: string; // 加密货币金额 (如 "13.6942 USDT")
+  coinRate?: string; // 汇率参考说明 (如 "1 USDT ≈ 7.30 CNY")
+  walletAddress?: string; // 虚拟币收款地址
+  expireSeconds?: number; // 倒计时秒数
 }
 
 export interface NotifyCtx {

@@ -35,6 +35,7 @@ const wxOrders = [];
 const alipayOrders = [];
 const emails = [];
 const mockBills = []; // {id, timeStr, amount}
+const mockTronTransfers = []; // 波场链上入账记录 {transaction_id, to, value, block_timestamp}
 // ---- BEpusdt 网关 mock ----
 const BE_TOKEN = 'bepusdt_token_mock_123456';
 const bepusdtHits = []; // 收到的 create-transaction 请求
@@ -225,6 +226,16 @@ async function mockUpstreamHandler(req, res) {
         request_id: '',
       }));
     });
+    return;
+  }
+  // TronGrid TRC20 查链 mock
+  if (u.pathname.includes('/transactions/trc20')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      data: mockTronTransfers,
+      success: true,
+      meta: { at: Date.now(), page_size: 20 },
+    }));
     return;
   }
   res.writeHead(404); res.end();
@@ -984,6 +995,61 @@ async function main() {
     // 重复回调幂等
     r = await fetch(BASE + `/channel/notify/bepusdt/${beChId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bePaid) });
     ok((await r.text()) === 'success', '重复回调幂等(不重复入账)');
+
+    console.log('\n== 25. 原生 USDT (TRC20 链上免挂对账引擎) ==');
+    // 钱包地址必填校验 (空地址被拒)
+    r = await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ plugin: 'tronusdt', name: '空地址渠道', config: { address: '' } }) });
+    j = await r.json();
+    ok(j.code === -1, 'TRC20钱包地址必填校验被拒');
+    // 创建合法的原生 USDT 渠道
+    const myWallet = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
+    r = await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ plugin: 'tronusdt', name: '原生USDT', config: { address: myWallet, rate: '7.30', api_base: `http://127.0.0.1:${UPSTREAM_PORT}` } }) });
+    ok((await r.json()).code === 0, '创建原生 USDT 渠道成功');
+    channelsList = (await (await fetch(BASE + '/admin/api/channels', { headers: { Cookie: adminCookie } })).json()).data.list;
+    const tronChId = channelsList.find((x) => x.plugin === 'tronusdt').id;
+    ok(Number(tronChId) > 0, '原生 USDT 渠道已入库');
+    // 映射支付类型
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ channel_map: JSON.stringify({ usdt: tronChId }) }) });
+    // 下单测试
+    const tronArgs = { ...orderArgs, type: 'usdt', out_trade_no: 'TRONUSDT' + Date.now(), money: '100.00' };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...tronArgs, sign: signParams(tronArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === 1, '原生 USDT 订单创建成功');
+    const tronTradeNo = j.trade_no;
+    ok(j.qrcode.startsWith('tron:' + myWallet + '?amount='), '返回符合标准的波场转账 URI');
+    ok(j.coin_amount.includes('USDT'), '接口返回包含 USDT 货币标识');
+    // 收银台页面渲染
+    r = await fetch(BASE + '/cashier/' + tronTradeNo);
+    const tronCashierHtml = await r.text();
+    ok(tronCashierHtml.includes(myWallet), '收银台展示 TRC20 收款地址');
+    ok(tronCashierHtml.includes('TRC20网络') && tronCashierHtml.includes('复制地址') && tronCashierHtml.includes('复制金额'), '收银台展示专属复制按钮与 TRC20 提示');
+    // 提取订单计算的金额 (SUN)
+    const expectedPayUsdt = ((tronCashierHtml.match(/data-pay="([\d.]+)"/) || [])[1]);
+    const expectedPaySun = Math.round(Number(expectedPayUsdt) * 1000000);
+    ok(Number(expectedPayUsdt) > 13 && Number(expectedPayUsdt) < 14, `防撞单微尾数金额正确: ${expectedPayUsdt} USDT`);
+    // 尚未转账时，查询状态应为 0 (待支付)
+    let tronStatus = await (await fetch(BASE + '/api/cashier/status?trade_no=' + tronTradeNo)).json();
+    ok(tronStatus.status === 0, '未入账前订单保持待支付');
+    // 模拟链上到账 (波场出块写入 mockTronTransfers)
+    const txid = '9a8b7c6d5e4f3a2b1c0d' + Date.now();
+    mockTronTransfers.push({
+      transaction_id: txid,
+      to: myWallet,
+      value: String(expectedPaySun),
+      block_timestamp: Date.now(),
+    });
+    // 前端收银台再次轮询状态 -> 查链命中 -> 秒级变为 1 (已支付)
+    await waitFor(async () => {
+      const rr = await fetch(BASE + '/api/cashier/status?trade_no=' + tronTradeNo);
+      return (await rr.json()).status >= 1;
+    }, 8000);
+    tronStatus = await (await fetch(BASE + '/api/cashier/status?trade_no=' + tronTradeNo)).json();
+    ok(tronStatus.status === 1, '波场链上出块确认后订单自动变已支付');
+    // 商户异步通知
+    await waitFor(async () => merchantNotifies.some((x) => x.params.out_trade_no === tronArgs.out_trade_no), 8000);
+    const tronNotify = merchantNotifies.find((x) => x.params.out_trade_no === tronArgs.out_trade_no);
+    ok(tronNotify && tronNotify.signValid, '原生 USDT 订单支付成功后商户收到通知');
+
 
     // 公开统计与首页
     r = await fetch(BASE + '/api/stats');

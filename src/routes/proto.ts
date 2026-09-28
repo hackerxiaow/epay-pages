@@ -190,6 +190,8 @@ for (const path of ['/mapi.php', '/mapi']) {
       payurl: pr.payUrl || '',
       qrcode: pr.qrContent || '',
       img: pr.qrContent || '',
+      coin_amount: pr.coinAmount || '',
+      wallet_address: pr.walletAddress || '',
     });
   });
 }
@@ -215,17 +217,26 @@ proto.get('/cashier/:tradeNo', async (c) => {
       merchant: user?.username || String(order.uid),
       err: name,
       transferUrl: pr.transferUrl || '',
+      coinAmount: pr.coinAmount,
+      coinRate: pr.coinRate,
+      walletAddress: pr.walletAddress,
+      expireSeconds: pr.expireSeconds,
     })
   );
 });
 
-// 收银台轮询 (同时驱动账单懒轮询: 买家页面每2秒一次, 30秒节流)
+// 收银台轮询 (同时驱动账单懒轮询 + 原生USDT链上查账: 买家页面每2秒一次)
 proto.get('/api/cashier/status', async (c) => {
   const tradeNo = c.req.query('trade_no') || '';
   const order = await loadOrder(c.env, tradeNo);
   if (!order) return c.json({ code: -1, msg: '订单不存在' });
-  const { pollAllBills } = await import('../lib/billpoll');
-  c.executionCtx.waitUntil(pollAllBills(c.env));
+  if (order.status === 0) {
+    const { pollAllBills } = await import('../lib/billpoll');
+    c.executionCtx.waitUntil(pollAllBills(c.env));
+    const { pollTronOrder } = await import('../lib/tronusdt');
+    const paid = await pollTronOrder(c.env, order);
+    if (paid) return c.json({ code: 0, status: 1 });
+  }
   return c.json({ code: 0, status: order.status });
 });
 
@@ -332,13 +343,18 @@ function cashierPage(o: {
   merchant: string;
   err: string;
   transferUrl?: string;
+  coinAmount?: string;
+  coinRate?: string;
+  walletAddress?: string;
+  expireSeconds?: number;
 }): string {
   const isImg = /^https?:\/\/.+\.(png|jpe?g|gif|webp)(\?|$)/i.test(o.qr);
+  const isUsdt = o.type === 'usdt' && !!o.walletAddress;
   const typeMap: Record<string, [string, string]> = {
     wxpay: ['微信支付', '#10b981'],
     alipay: ['支付宝', '#2563eb'],
     qqpay: ['QQ 钱包', '#0284c7'],
-    usdt: ['USDT 泰达币', '#059669'],
+    usdt: ['USDT 泰达币 (TRC20)', '#059669'],
     bank: ['银联 / 云闪付', '#d97706'],
     paypal: ['PayPal 贝宝', '#0070ba'],
     jdpay: ['京东支付', '#e1251b'],
@@ -359,7 +375,7 @@ function cashierPage(o: {
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px}
-.checkout-card{background:var(--surface);width:100%;max-width:400px;border-radius:24px;border:1px solid rgba(226,232,240,0.8);box-shadow:0 20px 40px -15px rgba(15,23,42,0.08);overflow:hidden;animation:fadeIn .3s ease}
+.checkout-card{background:var(--surface);width:100%;max-width:420px;border-radius:24px;border:1px solid rgba(226,232,240,0.8);box-shadow:0 20px 40px -15px rgba(15,23,42,0.08);overflow:hidden;animation:fadeIn .3s ease}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 
 .card-top{padding:24px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
@@ -370,14 +386,18 @@ html,body{background:var(--bg);color:var(--text);font-family:-apple-system,Blink
 .channel-pill{display:inline-flex;align-items:center;gap:6px;background:#f8fafc;border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:600;padding:6px 14px;border-radius:100px;margin-bottom:16px}
 .amount-box{margin-bottom:12px}
 .amount-box .sym{font-size:24px;font-weight:700;margin-right:2px}
-.amount-box .val{font-size:44px;font-weight:800;letter-spacing:-1px;color:var(--text)}
+.amount-box .val{font-size:40px;font-weight:800;letter-spacing:-1px;color:var(--text)}
 
 .order-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px}
 .order-num{font-size:12px;color:var(--text-muted);font-family:monospace}
 
-.qr-box{margin:24px auto 16px;width:200px;height:200px;background:#fff;border:1px solid var(--border);border-radius:18px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,0.04);padding:8px}
-.qr-box img{width:184px;height:184px;border-radius:12px;display:block}
-#qrcode{width:184px;height:184px;display:flex;align-items:center;justify-content:center}
+.qr-box{margin:20px auto 16px;width:196px;height:196px;background:#fff;border:1px solid var(--border);border-radius:18px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,0.04);padding:8px}
+.qr-box img{width:180px;height:180px;border-radius:12px;display:block}
+#qrcode{width:180px;height:180px;display:flex;align-items:center;justify-content:center}
+
+.btn-copy{border:1px solid var(--border);background:#fff;color:var(--text);font-size:11.5px;font-weight:600;padding:4px 10px;border-radius:6px;cursor:pointer;transition:all .15s}
+.btn-copy:hover{border-color:var(--color);color:var(--color)}
+.btn-copy:active{transform:scale(0.95)}
 
 .pay-tip{font-size:13px;color:var(--text-muted);margin:16px 0 20px;line-height:1.6}
 .pay-tip b{color:var(--color)}
@@ -385,7 +405,7 @@ html,body{background:var(--bg);color:var(--text);font-family:-apple-system,Blink
 .btn-transfer{display:block;width:100%;background:var(--color);color:#fff;font-size:15px;font-weight:700;padding:14px;border-radius:14px;text-decoration:none;margin-top:16px;box-shadow:0 4px 14px -2px rgba(37,99,235,0.4);transition:all .2s}
 .btn-transfer:active{transform:scale(0.98);opacity:0.9}
 
-.status-pill{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--text-muted);background:#f8fafc;border:1px solid var(--border);padding:6px 16px;border-radius:100px;margin-top:20px}
+.status-pill{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--text-muted);background:#f8fafc;border:1px solid var(--border);padding:6px 16px;border-radius:100px;margin-top:16px}
 .pulse-dot{width:8px;height:8px;border-radius:50%;background:#f59e0b;animation:pulse 1.4s infinite}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.3;transform:scale(0.85)}}
 
@@ -414,9 +434,19 @@ html,body{background:var(--bg);color:var(--text);font-family:-apple-system,Blink
       <span>${typeLabel}</span>
     </div>
 
-    <div class="amount-box">
-      <span class="sym">¥</span><span class="val" data-pay="${o.money}">${o.money}</span>
-    </div>
+    ${isUsdt ? `
+      <div class="amount-box">
+        <span class="sym" style="color:#059669;font-size:24px">₮</span>
+        <span class="val" data-pay="${(o.coinAmount || '').replace(/[^0-9.]/g, '')}" style="color:#059669">${o.coinAmount || o.money}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:-6px;margin-bottom:14px">
+        原订单 ¥${o.money} ${o.coinRate ? ` · ${o.coinRate}` : ''}
+      </div>
+    ` : `
+      <div class="amount-box">
+        <span class="sym">¥</span><span class="val" data-pay="${o.money}">${o.money}</span>
+      </div>
+    `}
 
     <div class="order-title">${o.orderName}</div>
     <div class="order-num">单号：${o.tradeNo}</div>
@@ -426,17 +456,38 @@ html,body{background:var(--bg);color:var(--text);font-family:-apple-system,Blink
       : `<div class="qr-box"><div id="qrcode"></div></div>`)
       : ''}
 
-    <div class="pay-tip">
-      ${o.qr ? '请使用手机' + typeLabel + '扫码支付' : '请向上方账户完成转账'} <b>¥${o.money}</b><br>
-      <span style="font-size:11px">金额含专属校验尾数，请勿修改金额，支付后自动跳转</span>
-    </div>
+    ${isUsdt ? `
+      <div style="background:#f8fafc;border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:16px 0;text-align:left;font-size:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-weight:700;color:var(--text)">收款地址 <span style="font-size:11px;font-weight:400;color:#059669">(TRC20网络)</span></span>
+          <button type="button" class="btn-copy" onclick="copyVal('${o.walletAddress}', this)">复制地址</button>
+        </div>
+        <div style="font-family:monospace;word-break:break-all;color:#334155;background:#fff;padding:8px;border-radius:8px;border:1px solid #e2e8f0;font-size:12px;letter-spacing:0.2px">${o.walletAddress}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;margin-bottom:6px">
+          <span style="font-weight:700;color:var(--text)">精确转账金额</span>
+          <button type="button" class="btn-copy" onclick="copyVal('${(o.coinAmount || '').replace(/[^0-9.]/g, '')}', this)">复制金额</button>
+        </div>
+        <div style="font-family:monospace;word-break:break-all;color:#059669;background:#ecfdf5;padding:8px 10px;border-radius:8px;border:1px solid #a7f3d0;font-size:14px;font-weight:700">${o.coinAmount}</div>
+      </div>
+
+      <div class="pay-tip" style="margin-top:12px">
+        <b style="color:#059669">⚠️ 请务必转入精确金额 ${o.coinAmount}（TRC20 网络）</b><br>
+        <span style="font-size:11.5px">含专属校验微尾数，波场链上出块确认后自动秒级到账并跳转</span>
+      </div>
+      ${o.expireSeconds ? `<div id="countdown" style="font-size:12px;color:#ef4444;font-weight:600;margin:-8px 0 14px"></div>` : ''}
+    ` : `
+      <div class="pay-tip">
+        ${o.qr ? '请使用手机' + typeLabel + '扫码支付' : '请向上方账户完成转账'} <b>¥${o.money}</b><br>
+        <span style="font-size:11px">金额含专属校验尾数，请勿修改金额，支付后自动跳转</span>
+      </div>
+    `}
 
     ${o.transferUrl ? `<a class="btn-transfer" href="${o.transferUrl}">打开${typeLabel}（金额已填好） →</a>` : ''}
 
     <div>
       <div class="status-pill" id="state">
         <span class="pulse-dot"></span>
-        <span>等待扫码支付中…</span>
+        <span>${isUsdt ? '等待波场链上转账确认…' : '等待扫码支付中…'}</span>
       </div>
     </div>
 
@@ -450,7 +501,33 @@ html,body{background:var(--bg);color:var(--text);font-family:-apple-system,Blink
 <script src="/assets/vendor/jquery/3.4.1/jquery.min.js?v=1"></script>
 <script src="/assets/vendor/jquery.qrcode/1.0/jquery.qrcode.min.js?v=1"></script>
 <script>
+function copyVal(txt, btn){
+  navigator.clipboard.writeText(txt).then(function(){
+    var old = btn.innerText;
+    btn.innerText = '已复制!';
+    btn.style.borderColor = '#059669';
+    btn.style.color = '#059669';
+    setTimeout(function(){ btn.innerText = old; btn.style.borderColor = ''; btn.style.color = ''; }, 1600);
+  }).catch(function(){ prompt('请手动复制:', txt); });
+}
 if(document.getElementById('qrcode')){jQuery('#qrcode').qrcode({width:176,height:176,text:${JSON.stringify(o.qr)}});}
+
+${o.expireSeconds ? `
+var remainSec = ${Math.max(0, o.expireSeconds)};
+function updateCountdown(){
+  if(remainSec <= 0){
+    document.getElementById('countdown').innerText = '订单已超时，请重新下单';
+    return;
+  }
+  var m = Math.floor(remainSec / 60);
+  var s = remainSec % 60;
+  document.getElementById('countdown').innerText = '剩余支付时间: ' + (m<10?'0':'') + m + ':' + (s<10?'0':'') + s;
+  remainSec--;
+}
+updateCountdown();
+setInterval(updateCountdown, 1000);
+` : ''}
+
 var timer=setInterval(function(){
   jQuery.get('/api/cashier/status?trade_no=${o.tradeNo}',function(r){
     if(r.code===0&&r.status>=1){
@@ -461,5 +538,5 @@ var timer=setInterval(function(){
     }
   });
 },2000);
-</script></body></html>`
+</script></body></html>`;
 }
