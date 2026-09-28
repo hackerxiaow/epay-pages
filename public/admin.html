@@ -419,9 +419,13 @@ async function saveChannel(id){
   $('.ch-cfg').each(function(){ config[$(this).data('k')] = $(this).val(); });
   const plugin = $('#ch-plugin').val();
   const pl = PLUGINS.find(x=>x.id===plugin);
+  const weight = parseInt($('#ch-weight').val() || '1', 10) || 1;
+  const paymin = ($('#ch-paymin').val() || '').trim();
+  const paymax = ($('#ch-paymax').val() || '').trim();
   const r = await api('/admin/api/channels',{method:'POST',body:JSON.stringify({
     id:id||undefined, plugin, name:$('#ch-name').val(), status:parseInt($('#ch-status').val()),
-    config, types:pl?pl.types:[]
+    config, types:pl?pl.types:[],
+    weight, paymin, paymax
   })});
   if(r.code===0){ $('#modal').modal('hide'); loadChannels(); } else alert(r.msg);
 }

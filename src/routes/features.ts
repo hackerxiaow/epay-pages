@@ -674,10 +674,16 @@ features.post('/admin/api/settles/pay', async (c) => {
   return c.json({ code: 0, msg: '打款成功' });
 });
 
-// 插件清单 (供 admin.html 渲染, 含多行字段)
+// 插件清单 (供 admin.html 渲染, 含多行字段与操作指引)
 features.get('/admin/api/plugins', (c) => {
   return c.json({
     code: 0,
-    data: listPlugins().map((p) => ({ id: p.id, name: p.name, types: p.types, inputs: p.inputs })),
+    data: listPlugins().map((p) => ({
+      id: p.id,
+      name: p.name,
+      types: p.types,
+      inputs: p.inputs,
+      help: p.help,
+    })),
   });
 });

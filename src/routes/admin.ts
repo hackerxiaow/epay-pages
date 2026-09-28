@@ -118,7 +118,19 @@ admin.post('/api/orders/refund', async (c) => {
 // ---------- 渠道 ----------
 admin.get('/api/channels', async (c) => {
   const { results } = await c.env.DB.prepare('SELECT * FROM channels ORDER BY id').all();
-  return c.json({ code: 0, data: { list: results, plugins: listPlugins().map((p) => ({ id: p.id, name: p.name, types: p.types, inputs: p.inputs })) } });
+  return c.json({
+    code: 0,
+    data: {
+      list: results,
+      plugins: listPlugins().map((p) => ({
+        id: p.id,
+        name: p.name,
+        types: p.types,
+        inputs: p.inputs,
+        help: p.help,
+      })),
+    },
+  });
 });
 
 admin.post('/api/channels', async (c) => {

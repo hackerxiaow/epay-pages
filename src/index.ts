@@ -45,7 +45,17 @@ app.all('*', async (c) => {
   const assets = (c.env as { ASSETS?: Fetcher }).ASSETS;
   if (assets) {
     try {
-      return await assets.fetch(c.req.raw);
+      const res = await assets.fetch(c.req.raw);
+      // HTML 文件禁用缓存, 避免用户浏览器和 CDN 缓存旧前端代码
+      const path = c.req.path;
+      if (path.endsWith('.html') || path === '/admin' || path === '/user') {
+        const h = new Headers(res.headers);
+        h.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        h.set('Pragma', 'no-cache');
+        h.set('Expires', '0');
+        return new Response(res.body, { status: res.status, headers: h });
+      }
+      return res;
     } catch {}
   }
   return c.text('Not Found', 404);
