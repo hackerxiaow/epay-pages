@@ -32,14 +32,15 @@ export const tronUsdtPlugin: ChannelPlugin = {
     },
     {
       name: 'trongrid_key',
-      label: 'TronGrid API Key (可选)',
-      placeholder: '留空使用公共官方节点',
-      hint: '可选。去 trongrid.io 免费注册申请，可提高查链并发上限。',
+      label: 'TronGrid API Key (可选 · 99%用户直接留空)',
+      placeholder: '留空即可！使用官方公共节点',
+      hint: '非必填！日常使用直接留空即可，波场官方公共节点完全够用。单日几万单的高频商户才建议去 trongrid.io 免费注册申请。',
     },
     {
       name: 'api_base',
-      label: '自定义 API 节点 (仅测试/专线用, 留空默认)',
-      placeholder: '留空默认使用官方节点',
+      label: '自定义 API 节点 (可选 · 99%用户直接留空)',
+      placeholder: '留空即可！默认直连波场主网 https://api.trongrid.io',
+      hint: '非必填！留空自动直连波场官方节点。只有自建波场全节点或专线反代时才需要填。',
     },
   ],
   help: [
