@@ -86,6 +86,40 @@ body{padding-top:76px;background:var(--bg);color:var(--text);font-family:-apple-
 .modal-title{font-weight:700;color:var(--text);font-size:16px}
 .modal-body{padding:24px}
 .modal-footer{background:#f8fafc;border-top:1px solid var(--border);padding:16px 24px}
+
+/* 支付映射编辑器: 桌面三列, 手机自动堆叠成卡片 (不用表格, 避免窄屏横向溢出/错位) */
+.map-head{display:flex;gap:12px;padding-bottom:10px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:#475569}
+.map-head .mh-type{flex:0 0 210px}
+.map-head .mh-ch{flex:1 1 auto}
+.map-head .mh-act{flex:0 0 64px;text-align:center}
+.map-row{display:flex;gap:12px;align-items:flex-start;padding:16px 0;border-bottom:1px solid #f1f5f9}
+.map-row:last-child{border-bottom:none}
+.map-type-wrap{flex:0 0 210px;min-width:0}
+.map-ch-wrap{flex:1 1 auto;min-width:0}
+.map-act{flex:0 0 64px;text-align:center;padding-top:2px}
+.map-field-label{display:none;font-size:12px;font-weight:600;color:#475569;margin-bottom:6px}
+.map-chips{display:flex;flex-wrap:wrap;gap:8px}
+.map-chip{border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:999px;padding:6px 13px;font-size:12.5px;font-weight:500;line-height:1.5;cursor:pointer;transition:all .15s;max-width:100%;text-align:left;overflow-wrap:anywhere}
+.map-chip:hover{border-color:var(--primary);color:var(--primary)}
+.map-chip.on{background:#eff6ff;border-color:var(--primary);color:var(--primary);font-weight:700;box-shadow:0 0 0 3px rgba(37,99,235,0.10)}
+.map-chip .cid{opacity:.55;font-weight:700;margin-right:3px}
+.map-chip .cst{opacity:.6;font-weight:400;margin-left:3px;font-size:11.5px}
+.map-empty{padding:16px 0;font-size:13px;color:var(--text-muted)}
+
+/* 渠道插件配置引导 */
+.plugin-help{background:#f8fafc;border:1px solid var(--border);border-left:3px solid var(--primary);border-radius:10px;padding:12px 14px;margin-bottom:18px;font-size:12.5px;color:#475569;line-height:1.95}
+.plugin-help code{background:#eef2f7;padding:1px 5px;border-radius:4px;font-size:11.5px;word-break:break-all;color:#334155}
+.field-hint{font-size:12px;color:var(--text-muted);margin-top:5px;line-height:1.6}
+
+@media(max-width:767px){
+  .map-head{display:none}
+  .map-row{flex-direction:column;gap:12px;border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;background:#fff}
+  .map-row:last-child{margin-bottom:0}
+  .map-type-wrap,.map-ch-wrap,.map-act{flex:1 1 auto;width:100%}
+  .map-act{text-align:right;padding-top:0}
+  .map-field-label{display:block}
+  .panel-body{padding:16px}
+}
 </style>
 </head>
 <body>
@@ -213,13 +247,11 @@ body{padding-top:76px;background:var(--bg);color:var(--text);font-family:-apple-
         <div class="form-group"><label>站点名称</label><input id="cfg-sitename" class="form-control"></div>
         <div class="form-group"><label>开放商户注册 (1开/0关)</label><input id="cfg-reg_open" class="form-control"></div>
         <div class="form-group">
-  <label>类型→渠道 映射（点"添加映射"选择支付方式与渠道，无需写 JSON）</label>
-  <table class="table table-condensed table-bordered" style="margin-bottom:8px">
-    <thead><tr><th style="width:170px">支付方式</th><th>渠道（按住 Ctrl 可多选 = 加权轮询）</th><th style="width:64px">操作</th></tr></thead>
-    <tbody id="map-body"></tbody>
-  </table>
-  <button type="button" class="btn btn-success btn-sm" onclick="addMapRow('alipay',[])"><i class="fa fa-plus"></i> 添加映射</button>
-  <span class="text-muted" style="font-size:12px;margin-left:8px">保存设置时自动生成映射规则</span>
+  <label>类型→渠道 映射（点选渠道，不用写 JSON）</label>
+  <div class="map-head"><div class="mh-type">支付方式</div><div class="mh-ch">收款渠道（可多选，选多个 = 按权重轮询）</div><div class="mh-act">操作</div></div>
+  <div id="map-body"></div>
+  <button type="button" class="btn btn-success btn-sm" style="margin-top:14px" onclick="addMapRow('alipay',[])"><i class="fa fa-plus"></i> 添加映射</button>
+  <span class="text-muted" style="font-size:12px;margin-left:8px">保存设置时一并保存</span>
 </div>
         <div class="form-group"><label>通知重试 Token (cron 用)</label><input id="cfg-cron_token" class="form-control"></div>
         <div class="form-group"><label>平台公告 (商户中心展示, 留空关闭)</label><input id="cfg-announcement" class="form-control"></div>
@@ -338,16 +370,21 @@ function editChannel(id){
 }
 function renderChCfg(){
   const pl = PLUGINS.find(x=>x.id===$('#ch-plugin').val());
-  $('#ch-cfg-area').html((pl?pl.inputs:[]).map(i=>{
+  const helpHtml = (pl && pl.help && pl.help.length)
+    ? `<div class="plugin-help">${pl.help.map(l=>`<div>${l}</div>`).join('')}</div>` : '';
+  const fields = (pl?pl.inputs:[]).map(i=>{
+    const ph = i.placeholder ? ` placeholder="${i.placeholder}"` : '';
     const field = i.multiline
-      ?`<textarea class="form-control ch-cfg" data-k="${i.name}" rows="4">${EDIT_CFG[i.name]||''}</textarea>`
-      :`<input class="form-control ch-cfg" data-k="${i.name}" value="${EDIT_CFG[i.name]||''}">`;
+      ?`<textarea class="form-control ch-cfg" data-k="${i.name}" rows="3"${ph}>${EDIT_CFG[i.name]||''}</textarea>`
+      :`<input class="form-control ch-cfg" data-k="${i.name}" value="${EDIT_CFG[i.name]||''}"${ph}>`;
     const genBtn = (i.name==='key')
       ?`<span class="input-group-btn"><button class="btn btn-primary" type="button" title="自动生成32位密钥" onclick="genKey(this)"><i class="fa fa-magic"></i></button></span>`
       :'';
     const wrapped = genBtn ? `<div class="input-group">${field}${genBtn}</div>` : field;
-    return `<div class="form-group"><label>${i.label}${i.required?' *':''}</label>${wrapped}</div>`;
-  }).join(''));
+    const hint = i.hint ? `<div class="field-hint">${i.hint}</div>` : '';
+    return `<div class="form-group"><label>${i.label}${i.required?' *':''}</label>${wrapped}${hint}</div>`;
+  }).join('');
+  $('#ch-cfg-area').html(helpHtml + fields);
 }
 function genKey(btn){
   const chars='abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -497,56 +534,66 @@ function addMapRow(type, ch){
 }
 function delMapRow(i){ MAP_ROWS.splice(i, 1); renderMap(); }
 function renderMap(){
-  $('#map-body').html(MAP_ROWS.map((r, i) => {
+  const box = $('#map-body');
+  if (!MAP_ROWS.length) {
+    box.html('<div class="map-empty">暂无映射，点下方绿色按钮「添加映射」选择支付方式与收款渠道</div>');
+    return;
+  }
+  box.html(MAP_ROWS.map((r, i) => {
     const isPreset = PRESET_PAY_TYPES.some((t) => t[0] === r.type);
-    const selectHtml = `
+    const sel = `
       <select class="form-control input-sm map-type" data-i="${i}">
         ${PRESET_PAY_TYPES.map((t) => `<option value="${t[0]}" ${r.type === t[0] ? 'selected' : ''}>${t[1]}</option>`).join('')}
         <option value="__custom__" ${!isPreset ? 'selected' : ''}>✨ 自定义标识 (任意输入)...</option>
       </select>
-      ${!isPreset ? `<input class="form-control input-sm map-custom" data-i="${i}" value="${r.type}" placeholder="输入英文类型标识如 usdc, visa" style="margin-top:6px;border-color:#2563eb">` : ''}
+      ${!isPreset ? `<input class="form-control input-sm map-custom" data-i="${i}" value="${r.type}" placeholder="英文标识, 如 usdc" style="margin-top:6px;border-color:var(--primary)">` : ''}
     `;
-    return `<tr>
-      <td style="min-width:180px">${selectHtml}</td>
-      <td>
-        <select class="form-control input-sm map-ch" data-i="${i}" multiple size="2" style="height:58px">
-          ${CHANNELS_CACHE.map((c) => `<option value="${c.id}" ${r.ch.includes(c.id) ? 'selected' : ''}>#${c.id} - ${c.name} [${c.plugin}]</option>`).join('')}
-        </select>
-      </td>
-      <td style="text-align:center;vertical-align:middle!important">
-        <button class="btn btn-danger btn-xs" onclick="delMapRow(${i})"><i class="fa fa-trash"></i> 删除</button>
-      </td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="3" class="text-muted text-center" style="padding:20px">暂无映射，点击下方绿色按钮"添加映射"</td></tr>');
+    const chips = CHANNELS_CACHE.length
+      ? CHANNELS_CACHE.map((c) => {
+          const on = r.ch.includes(c.id);
+          return `<button type="button" class="map-chip${on ? ' on' : ''}" data-i="${i}" data-id="${c.id}"><span class="cid">#${c.id}</span>${c.name}${c.status === 0 ? '<span class="cst">已停用</span>' : ''}</button>`;
+        }).join('')
+      : '<div style="font-size:12.5px;color:var(--text-muted)">还没有收款渠道，请先到「支付渠道」页面添加并启用</div>';
+    return `<div class="map-row">
+      <div class="map-type-wrap"><div class="map-field-label">支付方式</div>${sel}</div>
+      <div class="map-ch-wrap"><div class="map-field-label">收款渠道（可多选 = 轮询）</div><div class="map-chips">${chips}</div></div>
+      <div class="map-act"><button class="btn btn-danger btn-xs" onclick="delMapRow(${i})"><i class="fa fa-trash"></i> 删除</button></div>
+    </div>`;
+  }).join(''));
 
   $('#map-body .map-type').off('change').on('change', function(){
     const idx = $(this).data('i');
     const val = $(this).val();
-    if (val === '__custom__') {
-      MAP_ROWS[idx].type = 'custom';
-    } else {
-      MAP_ROWS[idx].type = val;
-    }
+    // 切到自定义时置空, 让输入框空着等填写, 避免把占位值当真类型存进数据库
+    MAP_ROWS[idx].type = val === '__custom__' ? '' : val;
     renderMap();
+    $('#map-body .map-custom[data-i="' + idx + '"]').trigger('focus');
   });
   $('#map-body .map-custom').off('input').on('input', function(){
-    const idx = $(this).data('i');
-    MAP_ROWS[idx].type = $(this).val().trim();
+    MAP_ROWS[$(this).data('i')].type = $(this).val().trim();
   });
-  $('#map-body .map-ch').off('change').on('change', function(){
-    MAP_ROWS[$(this).data('i')].ch = ($(this).val() || []).map(Number);
+  // 渠道点选: 只切选中态不重绘, 免得在自定义输入框里打字时失焦
+  $('#map-body .map-chip').off('click').on('click', function(){
+    const row = MAP_ROWS[Number($(this).data('i'))];
+    const id = Number($(this).data('id'));
+    if (!row) return;
+    row.ch = row.ch.includes(id) ? row.ch.filter((x) => x !== id) : row.ch.concat([id]);
+    $(this).toggleClass('on', row.ch.includes(id));
   });
 }
+const CFG_FIELDS = ['sitename','reg_open','announcement','cron_token','blacklist','block_countries','auth_domain','cert_force','invite_rate','captcha_open','email_verify','email_webhook'];
 async function loadConfig(){
   await loadChannelsCache();
   const r = await api('/admin/api/config');
-  $('#cfg-sitename').val(r.data.sitename||''); $('#cfg-reg_open').val(r.data.reg_open||'0');
-  $('#cfg-channel_map').val(r.data.channel_map||'{}'); $('#cfg-cron_token').val(r.data.cron_token||'');
+  CFG_FIELDS.forEach((k) => { const el = $('#cfg-' + k); if (el.length) el.val(r.data[k] === undefined || r.data[k] === null ? '' : r.data[k]); });
+  MAP_ROWS = parseMap(r.data.channel_map);
+  renderMap();
 }
 async function saveConfig(){
-  const r = await api('/admin/api/config',{method:'POST',body:JSON.stringify({
-    sitename:$('#cfg-sitename').val(), reg_open:$('#cfg-reg_open').val(),
-    channel_map:$('#cfg-channel_map').val(), cron_token:$('#cfg-cron_token').val()})});
+  const body = {};
+  CFG_FIELDS.forEach((k) => { const el = $('#cfg-' + k); if (el.length) body[k] = String(el.val() == null ? '' : el.val()); });
+  body.channel_map = mapToJSON();
+  const r = await api('/admin/api/config',{method:'POST',body:JSON.stringify(body)});
   alert(r.code===0?'已保存':r.msg);
 }
 checkLogin();

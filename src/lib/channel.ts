@@ -48,11 +48,22 @@ export interface RefundCtx {
   order: OrderRow;
 }
 
+export interface ChannelInput {
+  name: string;
+  label: string;
+  required?: boolean;
+  multiline?: boolean;
+  placeholder?: string;
+  hint?: string; // 字段下方的灰色说明, 用于告诉管理员去哪里拿这个值
+}
+
 export interface ChannelPlugin {
   id: string;
   name: string;
   types: string[];
-  inputs: { name: string; label: string; required?: boolean; multiline?: boolean }[];
+  inputs: ChannelInput[];
+  /** 配置引导: 后台渠道弹窗里展示的步骤说明 (每项一行, 支持简单 HTML) */
+  help?: string[];
   createOrder(ctx: ChannelCtx): Promise<CreateOrderResult>;
   onNotify?(ctx: NotifyCtx): Promise<NotifyResult>;
   refund?(ctx: RefundCtx): Promise<{ ok: boolean; msg: string }>;

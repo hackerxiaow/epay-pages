@@ -35,6 +35,18 @@ const wxOrders = [];
 const alipayOrders = [];
 const emails = [];
 const mockBills = []; // {id, timeStr, amount}
+// ---- BEpusdt 网关 mock ----
+const BE_TOKEN = 'bepusdt_token_mock_123456';
+const bepusdtHits = []; // 收到的 create-transaction 请求
+/** BEpusdt 签名: 非空且非 signature 的参数按 ASCII 升序拼 k=v&, 末尾追加令牌, MD5 小写 */
+function bepusdtSign(params, token) {
+  const raw = Object.keys(params)
+    .filter((k) => k !== 'signature' && params[k] !== undefined && params[k] !== null && String(params[k]) !== '')
+    .sort()
+    .map((k) => `${k}=${params[k]}`)
+    .join('&');
+  return md5(raw + token);
+}
 function signStr(params) {
   return Object.keys(params)
     .filter((k) => k !== 'sign' && k !== 'sign_type' && params[k] !== undefined && params[k] !== '')
@@ -183,6 +195,35 @@ async function mockUpstreamHandler(req, res) {
     req.on('end', () => {
       emails.push(JSON.parse(body));
       res.writeHead(200); res.end('ok');
+    });
+    return;
+  }
+  // BEpusdt 网关 (v03413/BEpusdt 协议): signature 在 body 里, 响应 { status_code, message, data }
+  if (u.pathname === '/api/v1/order/create-transaction' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (d) => (body += d));
+    req.on('end', () => {
+      const p = JSON.parse(body);
+      const sign = p.signature;
+      delete p.signature;
+      bepusdtHits.push({ ...p, signValid: bepusdtSign(p, BE_TOKEN) === sign });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status_code: 200,
+        message: 'success',
+        data: {
+          fiat: p.fiat || 'CNY',
+          trade_id: 'BE' + Date.now(),
+          order_id: p.order_id,
+          amount: String(p.amount),
+          actual_amount: (Number(p.amount) / 7.2).toFixed(4),
+          token: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+          status: 1,
+          expiration_time: 600,
+          payment_url: `http://127.0.0.1:${UPSTREAM_PORT}/pay/checkout-counter/BE${Date.now()}`,
+        },
+        request_id: '',
+      }));
     });
     return;
   }
@@ -893,6 +934,57 @@ async function main() {
     r = await fetch(BASE + '/api/cashier/status?trade_no=' + qq2TradeNo);
     j = await r.json();
     ok(j.status === 1, 'QQ钱包账单轮询自动确认 (免挂)');
+
+    console.log('\n== 24. BEpusdt 加密货币渠道 (v03413 协议, mock) ==');
+    r = await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ plugin: 'bepusdt', name: 'USDT收款', config: { url: `http://127.0.0.1:${UPSTREAM_PORT}`, auth: BE_TOKEN } }) });
+    ok((await r.json()).code === 0, '创建 BEpusdt 渠道');
+    channelsList = (await (await fetch(BASE + '/admin/api/channels', { headers: { Cookie: adminCookie } })).json()).data.list;
+    const beChId = channelsList.find((x) => x.plugin === 'bepusdt').id;
+    ok(Number(beChId) > 0, 'BEpusdt 渠道已入库');
+    // 必填校验: 缺服务地址 / 缺令牌都应被后台拦下
+    r = await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ plugin: 'bepusdt', name: '缺参渠道', config: { url: '', auth: '' } }) });
+    j = await r.json();
+    ok(j.code === -1, 'BEpusdt 缺必填参数被拒');
+    await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ channel_map: JSON.stringify({ alipay: apiChId, wxpay: vmq2Id, qqpay: qqBillChId, usdt: beChId }) }) });
+    const beArgs = { ...orderArgs, type: 'usdt', out_trade_no: 'USDT' + Date.now(), money: '66.66' };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...beArgs, sign: signParams(beArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    if (j.code !== 1) console.log('   [debug bepusdt mapi]', JSON.stringify(j));
+    const beTradeNo = j.trade_no;
+    ok(j.code === 1 && j.payurl.startsWith('http://127.0.0.1:' + UPSTREAM_PORT + '/pay/checkout-counter/'), 'BEpusdt 下单返回官方收银台地址');
+    const beHit = bepusdtHits[0] || {};
+    ok(beHit.signValid === true, 'BEpusdt 下单签名正确(body signature, 非 Authorization 头)');
+    ok(beHit.order_id === beTradeNo && beHit.amount === 66.66, 'BEpusdt 订单号/金额(元) 正确');
+    ok(beHit.trade_type === 'usdt.trc20' && beHit.fiat === 'CNY', 'BEpusdt 默认收款网络与法币正确');
+    ok(String(beHit.notify_url).endsWith(`/channel/notify/bepusdt/${beChId}`), '回调地址指向本站并带上渠道ID');
+    ok(beHit.name === '测试商品', '商品名透传上游');
+    // 收银台应直接 302 到官方收银台
+    r = await fetch(BASE + '/cashier/' + beTradeNo, { redirect: 'manual' });
+    ok(r.status === 302 && (r.headers.get('location') || '').includes('/pay/checkout-counter/'), '收银台跳转 BEpusdt 官方收银台');
+    // 错误签名回调 → 拒绝
+    r = await fetch(BASE + `/channel/notify/bepusdt/${beChId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trade_id: 'BE1', order_id: beTradeNo, amount: 66.66, actual_amount: '9.25', token: 'T', block_transaction_id: 'H1', status: 2, signature: 'deadbeef' }) });
+    ok((await r.text()) === 'sign error', '伪造签名的回调被拒绝');
+    // 等待支付状态 (status=1) → 确认收到但不记账
+    const beWait = { trade_id: 'BE1', order_id: beTradeNo, amount: 66.66, actual_amount: '9.25', token: 'T', block_transaction_id: '', status: 1 };
+    beWait.signature = bepusdtSign(beWait, BE_TOKEN);
+    r = await fetch(BASE + `/channel/notify/bepusdt/${beChId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(beWait) });
+    ok((await r.text()) === 'success', '等待支付状态回调回 success 不重推');
+    let beStatus = await (await fetch(BASE + '/api/cashier/status?trade_no=' + beTradeNo)).json();
+    ok(beStatus.status === 0, '等待支付不误判为已付款');
+    // 支付成功 (status=2, 空值参数不参与签名)
+    const bePaid = { trade_id: 'BE1', order_id: beTradeNo, amount: 66.66, actual_amount: '9.25', token: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', block_transaction_id: 'txhash123', status: 2 };
+    bePaid.signature = bepusdtSign(bePaid, BE_TOKEN);
+    r = await fetch(BASE + `/channel/notify/bepusdt/${beChId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bePaid) });
+    ok((await r.text()) === 'success', 'BEpusdt 支付成功回调被接受');
+    beStatus = await (await fetch(BASE + '/api/cashier/status?trade_no=' + beTradeNo)).json();
+    ok(beStatus.status === 1, '链上确认后订单自动变为已支付');
+    await waitFor(async () => merchantNotifies.some((x) => x.params.out_trade_no === beArgs.out_trade_no), 8000);
+    const beNotify = merchantNotifies.find((x) => x.params.out_trade_no === beArgs.out_trade_no);
+    ok(beNotify && beNotify.signValid, 'BEpusdt 订单→商户异步通知成功且签名正确');
+    // 重复回调幂等
+    r = await fetch(BASE + `/channel/notify/bepusdt/${beChId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bePaid) });
+    ok((await r.text()) === 'success', '重复回调幂等(不重复入账)');
+
     // 公开统计与首页
     r = await fetch(BASE + '/api/stats');
     j = await r.json();

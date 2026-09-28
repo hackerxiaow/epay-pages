@@ -302,6 +302,7 @@ pre{width:100%;max-width:100%;padding:14px;overflow-x:auto;-webkit-overflow-scro
   <a href="#notify">异步回调</a>
   <a href="#query">查询退款</a>
   <a href="#paypage">码牌收款</a>
+  <a href="#usdt">加密货币收款</a>
   <a href="#monitors">监控端</a>
   <a href="#faq">常见问题</a>
 </div>
@@ -315,6 +316,7 @@ pre{width:100%;max-width:100%;padding:14px;overflow-x:auto;-webkit-overflow-scro
     <a href="#notify">异步回调与验签</a>
     <a href="#query">订单查询与退款</a>
     <a href="#paypage">码牌收款</a>
+    <a href="#usdt">加密货币收款</a>
     <a href="#monitors">多端监控端</a>
     <a href="#faq">常见问题</a>
   </div>
@@ -485,6 +487,30 @@ trade_no=平台订单号&money=退款金额&key=md5(trade_no+系统KEY+trade_no)
       <h2>码牌收款模式（无网站场景）</h2>
       <p>系统为每个商户提供专属静态聚合收银码牌页面：<code>https://您的域名/pay/商户ID</code>。</p>
       <p>无需搭建独立商城，直接将此链接打印成实体收银台台卡或发给买家，买家自主输入金额并选择支付渠道即可完成支付。</p>
+    </div>
+
+    <div class="section" id="usdt">
+      <h2>加密货币收款（USDT / BEpusdt 免挂机）</h2>
+      <p>加密货币收款走开源网关 <b>BEpusdt</b>（原 epusdt 的维护版，<code>v03413/BEpusdt</code>）：币直接进你自己的钱包，链上确认后自动回调本站订单，<b>无需任何挂机软件</b>，也没有第三方代收抽成。</p>
+      <p><b>服务地址与 Auth Key 都要你自己搭一套才有</b>（这是开源自建项目，没有公共服务器可以直接借用）。三步搞定：</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>步骤</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr><td><b>① 部署</b></td><td>在有公网 IP 的服务器执行：<br><code>docker run -d --name bepusdt -p 8000:8000 -v /root/bepusdt:/data v03413/bepusdt:latest</code></td></tr>
+            <tr><td><b>② 配钱包</b></td><td>浏览器打开 <code>http://服务器IP:8000</code> 初始化管理员账号，在「钱包管理」添加你的收款地址（如 TRC20）</td></tr>
+            <tr><td><b>③ 拿令牌</b></td><td>进入「系统管理 → 基本设置 → API 设置」，复制<b>对接令牌</b> ← 这就是后台要填的 Auth Key</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>建议再套一层域名与 HTTPS（Nginx/Caddy 反代 8000 端口），然后把域名填到后台渠道的「服务地址」（例如 <code>https://pay.你的域名.com</code>）。</p>
+      <h3>在后台开通（3 步）</h3>
+      <ol>
+        <li>「支付渠道 → 添加渠道」选插件 <code>BEpusdt(加密货币)</code>，填服务地址与对接令牌，状态选启用。</li>
+        <li>「系统设置 → 类型→渠道 映射」添加一行：支付方式选 <code>USDT 泰达币</code>，点选刚建的渠道，保存。</li>
+        <li>商户用 <code>type=usdt</code> 下单，买家会跳到 BEpusdt 官方收银台（带地址、金额、倒计时），链上确认后订单自动变已支付。</li>
+      </ol>
+      <p>本站与 BEpusdt 之间按下单/回调双向签名校验（非空参数按参数名 ASCII 升序拼 <code>key=value&amp;</code>，末尾追加令牌后取 MD5 小写），回调地址为 <code>https://您的域名/channel/notify/bepusdt/渠道ID</code>，无需手动配置。</p>
     </div>
 
     <div class="section" id="monitors">
