@@ -36,6 +36,21 @@ export async function resolveChannel(
     try {
       cfg = JSON.parse(ch.config || '{}');
     } catch {}
+
+    const isCrypto = ch.plugin === 'tronusdt' || ch.plugin === 'bepusdt' || payType === 'usdt';
+    if (isCrypto) {
+      // 加密货币渠道: paymin / paymax 按 USDT 计价
+      const rate = parseFloat(cfg.rate || '') || 7.30;
+      const orderUsdt = (money / 100) / rate;
+      const paymin = parseFloat(cfg.paymin || '0');
+      const paymax = parseFloat(cfg.paymax || '0');
+      // 允许设置如 0.1 USDT 最低限额
+      if (paymin > 0 && orderUsdt < paymin - 0.0001) return false;
+      if (paymax > 0 && orderUsdt > paymax + 0.0001) return false;
+      return true;
+    }
+
+    // 法币普通渠道 (微信/支付宝/QQ等): paymin / paymax 按人民币元计价
     const paymin = Math.round(Number(cfg.paymin || 0) * 100);
     const paymax = Math.round(Number(cfg.paymax || 0) * 100);
     if (paymin && money < paymin) return false;

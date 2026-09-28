@@ -1010,6 +1010,13 @@ async function main() {
     ok(Number(tronChId) > 0, '原生 USDT 渠道已入库');
     // 映射支付类型
     await fetch(BASE + '/admin/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ channel_map: JSON.stringify({ usdt: tronChId }) }) });
+    // 设置 0.1 USDT 最低限额测试
+    await fetch(BASE + '/admin/api/channels', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: adminCookie }, body: JSON.stringify({ id: tronChId, plugin: 'tronusdt', name: '原生USDT', config: { address: myWallet, rate: '7.30', paymin: '0.1', api_base: `http://127.0.0.1:${UPSTREAM_PORT}` } }) });
+    // 低于 0.1 USDT (0.50 元 / 7.30 ≈ 0.068 USDT < 0.1 USDT) -> 应被路由拦截
+    const lowArgs = { ...orderArgs, type: 'usdt', out_trade_no: 'LOW' + Date.now(), money: '0.50' };
+    r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...lowArgs, sign: signParams(lowArgs, shop.key), sign_type: 'MD5' }) });
+    j = await r.json();
+    ok(j.code === -1 && j.msg.includes('金额不在支持范围'), '低于 0.1 USDT 限额的订单被正确拦截');
     // 下单测试
     const tronArgs = { ...orderArgs, type: 'usdt', out_trade_no: 'TRONUSDT' + Date.now(), money: '100.00' };
     r = await fetch(BASE + '/mapi.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...tronArgs, sign: signParams(tronArgs, shop.key), sign_type: 'MD5' }) });

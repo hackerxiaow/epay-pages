@@ -472,7 +472,7 @@ html,body{background:var(--bg);color:var(--text);font-family:-apple-system,Blink
 
       <div class="pay-tip" style="margin-top:12px">
         <b style="color:#059669">⚠️ 请务必转入精确金额 ${o.coinAmount}（TRC20 网络）</b><br>
-        <span style="font-size:11.5px">含专属校验微尾数，波场链上出块确认后自动秒级到账并跳转</span>
+        <span style="font-size:11.5px">含专属校验微尾数，波场出块后自动秒级到账；网络手续费由买家钱包承担（交易所提币请将手续费另加，确保全额到账）。</span>
       </div>
       ${o.expireSeconds ? `<div id="countdown" style="font-size:12px;color:#ef4444;font-weight:600;margin:-8px 0 14px"></div>` : ''}
     ` : `

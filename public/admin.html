@@ -360,13 +360,11 @@ function editChannel(id){
       <option value="1" ${!c||c.status===1?'selected':''}>启用</option><option value="0" ${c&&c.status===0?'selected':''}>停用</option></select></div>
     <div id="ch-cfg-area"></div>
     <div class="row">
-      <div class="col-xs-4"><div class="form-group"><label>轮询权重 (默认1)</label><input id="ch-weight" class="form-control" value="${c?(c.weight||1):1}" placeholder="1"></div></div>
-      <div class="col-xs-4"><div class="form-group"><label>单笔最低 (商户金额·元)</label><input id="ch-paymin" class="form-control" value="${EDIT_CFG.paymin||''}" placeholder="留空不限"></div></div>
-      <div class="col-xs-4"><div class="form-group"><label>单笔最高 (商户金额·元)</label><input id="ch-paymax" class="form-control" value="${EDIT_CFG.paymax||''}" placeholder="留空不限"></div></div>
+      <div class="col-xs-4"><div class="form-group"><label id="lbl-ch-weight">轮询权重 (默认1)</label><input id="ch-weight" class="form-control" value="${c?(c.weight||1):1}" placeholder="1"></div></div>
+      <div class="col-xs-4"><div class="form-group"><label id="lbl-ch-paymin">单笔最低 (商户金额·元)</label><input id="ch-paymin" class="form-control" value="${EDIT_CFG.paymin||''}" placeholder="留空不限"></div></div>
+      <div class="col-xs-4"><div class="form-group"><label id="lbl-ch-paymax">单笔最高 (商户金额·元)</label><input id="ch-paymax" class="form-control" value="${EDIT_CFG.paymax||''}" placeholder="留空不限"></div></div>
     </div>
-    <div style="font-size:11.5px;color:var(--text-muted);margin:-8px 0 16px;line-height:1.6">
-      💡 <b>提示</b>：易支付协议以人民币元计价（商户网站下单传的是元），系统自动按实时汇率折算为 USDT。波场转账有网络能量费，建议在「单笔最低」设个门槛（如填 <code>10</code>，低于 10 元的订单将不走此通道）；「轮询权重」用于配置多个钱包地址时做加权分流。
-    </div>
+    <div id="ch-limit-tip" style="font-size:11.5px;color:var(--text-muted);margin:-8px 0 16px;line-height:1.6"></div>
   </div>
   <div class="modal-footer"><button class="btn btn-default" data-dismiss="modal">取消</button>
   <button class="btn btn-primary" onclick="saveChannel(${id})">保存</button></div>`);
@@ -375,6 +373,20 @@ function editChannel(id){
 }
 function renderChCfg(){
   const pl = PLUGINS.find(x=>x.id===$('#ch-plugin').val());
+  const isCrypto = pl && (pl.id === 'tronusdt' || pl.id === 'bepusdt' || (pl.types && pl.types.includes('usdt')));
+  if (isCrypto) {
+    $('#lbl-ch-paymin').html('单笔最低 (USDT)');
+    $('#ch-paymin').attr('placeholder', '如 0.1 (最低0.1 USDT)');
+    $('#lbl-ch-paymax').html('单笔最高 (USDT)');
+    $('#ch-paymax').attr('placeholder', '留空不限');
+    $('#ch-limit-tip').html('💡 <b>USDT 提示</b>：当前为 USDT 渠道，单笔最低/最高<b>直接按 USDT 计价</b>（如填 <code>0.1</code> 即可允许最低 0.1 USDT 支付）；系统在商户下单时自动折算校验；转账网络手续费由买家付款钱包自理。');
+  } else {
+    $('#lbl-ch-paymin').html('单笔最低 (商户金额·元)');
+    $('#ch-paymin').attr('placeholder', '留空不限');
+    $('#lbl-ch-paymax').html('单笔最高 (商户金额·元)');
+    $('#ch-paymax').attr('placeholder', '留空不限');
+    $('#ch-limit-tip').html('💡 <b>提示</b>：易支付协议以人民币元计价（商户网站下单传的是元）；「轮询权重」用于配置多个同类型渠道时做加权分流。');
+  }
   const helpHtml = (pl && pl.help && pl.help.length)
     ? `<div class="plugin-help">${pl.help.map(l=>`<div>${l}</div>`).join('')}</div>` : '';
   const fields = (pl?pl.inputs:[]).map(i=>{
