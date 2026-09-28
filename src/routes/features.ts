@@ -82,6 +82,9 @@ features.get('/pay/:uid', async (c) => {
     wxpay: '微信支付',
     qqpay: 'QQ 钱包',
     usdt: 'USDT 泰达币',
+    bank: '银联 / 云闪付',
+    paypal: 'PayPal 贝宝',
+    jdpay: '京东支付',
   };
 
   return c.html(`<!DOCTYPE html><html lang="zh-cn"><head><meta charset="utf-8">

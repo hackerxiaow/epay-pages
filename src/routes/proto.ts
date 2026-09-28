@@ -339,8 +339,11 @@ function cashierPage(o: {
     alipay: ['支付宝', '#2563eb'],
     qqpay: ['QQ 钱包', '#0284c7'],
     usdt: ['USDT 泰达币', '#059669'],
+    bank: ['银联 / 云闪付', '#d97706'],
+    paypal: ['PayPal 贝宝', '#0070ba'],
+    jdpay: ['京东支付', '#e1251b'],
   };
-  const [typeLabel, typeColor] = typeMap[o.type] || [o.type, '#2563eb'];
+  const [typeLabel, typeColor] = typeMap[o.type] || [o.type.toUpperCase(), '#334155'];
 
   return `<!DOCTYPE html><html lang="zh-cn"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
