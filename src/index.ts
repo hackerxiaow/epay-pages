@@ -31,6 +31,9 @@ registerPlugin(tronUsdtPlugin);
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+// 探针：仅用于确认平台在构建后读取函数产物
+const BUILD_PROBE = 'probe-1';
+
 app.route('/', proto);
 app.route('/', channelRoutes);
 app.route('/admin', admin);
@@ -41,6 +44,11 @@ app.route('/', vmqCompat);
 app.route('/', onebot);
 
 // 存储未就绪时给出可读提示，而不是裸 500
+app.use('*', async (c, next) => {
+  await next();
+  c.res.headers.set('x-epay-probe', BUILD_PROBE);
+});
+
 app.onError((err, c) => {
   const e = err as { code?: string; message?: string; hint?: string };
   if (e.code === 'STORE_CONFIG_MISSING') {
