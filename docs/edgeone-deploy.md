@@ -494,6 +494,7 @@ curl -X POST https://<你的域名>/install \
 | `npm test`（EdgeOne 模式） | 168 通过 / 0 失败 |
 | `npm run eo:build` | 函数包 < 300 KB，dist ≈ 5.5 MB |
 | 部署后 `GET /api/health?t=1` | `{"ok":true,"store":"edgeone","initialized":false,"build":"<commit> ..."}` |
+| 部署后 `GET /api/health?t=1` | `{"ok":true,"store":"edgeone","initialized":false,"build":"<commit> ..."}` |
 | 部署后 `GET /` | 200，首页含「三网聚合」 |
 | 部署后 `GET /admin.html` | 200，`Cache-Control: no-cache` |
 | `POST /install` | 返回 `cron_token`，重复调用返回「系统已初始化」 |
