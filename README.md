@@ -14,7 +14,8 @@
 >
 > 两个分支业务代码完全相同（协议、路由、页面、渠道插件、签名算法一行没改），
 > 只有数据访问层、入口与构建方式不同。EdgeOne 部署见 **[docs/edgeone-deploy.md](./docs/edgeone-deploy.md)**。
-> 这个分支上 `npm run dev`（wrangler）与 D1 脚本不可用，`npm test` 默认跑 EdgeOne 模式。
+> 这个分支不跑 wrangler、不用 D1：`npm run dev` 已改为本地 EdgeOne 模拟（静态优先 + 内存存储），
+> `npm test` 默认跑 EdgeOne 模式。连 GitHub 后推代码即自动构建部署，详见文档第四节。
 
 ## 特性
 
@@ -91,7 +92,6 @@ npx wrangler pages deploy dist --project-name epay-pages --branch main
 
 ```bash
 npm test        # 本分支：eo-local（静态优先 + 内存存储）+ mock 上游易支付 + mock 商户端
-npm run test:cf # main 分支：wrangler pages dev + 本地 D1
 ```
 
 168 项断言覆盖：协议双签名（MD5/RSA 含负例）、渠道全流程（含支付宝 RSA2 响应验签、

@@ -14,7 +14,7 @@
  */
 import worker from './index';
 import type { Bindings } from './lib/auth';
-import { runCron } from './lib/cron';
+import { guardCronTick, runCron } from './lib/cron';
 
 interface EdgeOneContext {
   request: Request;
@@ -84,18 +84,12 @@ async function materialize(ctx: EdgeOneContext): Promise<Request> {
   }
 }
 
-/** 平台调度入口：token 来自环境变量 CRON_TOKEN，不读数据库（数据库坏了也要能重试通知） */
+/** 平台调度入口：口令来自环境变量 CRON_TOKEN，不读数据库（数据库坏了也要能重试通知） */
 async function handleCronTick(req: Request, env: Record<string, string>): Promise<Response> {
-  const expect = env.CRON_TOKEN || '';
-  if (!expect) {
-    return Response.json(
-      { code: 0, msg: '未配置 CRON_TOKEN，定时任务接口已关闭' },
-      { status: 401 }
-    );
-  }
   const url = new URL(req.url);
-  const provided = url.searchParams.get('token') || req.headers.get('x-cron-token') || '';
-  if (provided !== expect) return Response.json({ code: 0, msg: 'token 不匹配' }, { status: 403 });
+  const token = url.searchParams.get('token') || req.headers.get('x-cron-token') || '';
+  const denied = await guardCronTick(token, env.CRON_TOKEN || '');
+  if (denied) return denied;
 
   const data = await runCron(buildBindings(env));
   return Response.json({ code: 0, data });

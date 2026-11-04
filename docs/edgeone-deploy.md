@@ -143,13 +143,48 @@ GET /api/cashier/status      → o/<trade_no>（1 次）
 
 ## 四、部署流程
 
-### 0. 前置
+部署有两条路，**推荐第 1 条（连 GitHub，推代码即上线）**。
 
-- Node.js 20+
-- EdgeOne 账号（Makers / Pages，免费版够用）
-- 服务器/本机能访问 `api.edgeone.ai`
+### 4.1 连接 GitHub 自动部署（推荐）
 
-### 1. 装依赖 + 本地验证
+在 EdgeOne 控制台「创建项目 → 导入 Git 仓库」里选 `hackerxiaow/epay-pages`，然后按下表填：
+
+| 配置项 | 值 | 说明 |
+| --- | --- | --- |
+| 分支 | **`edgeone`** | ⚠️ 不要选 `main`：那是 Cloudflare 版，产物是 `_worker.js`，在 EdgeOne 上跑不起来 |
+| 框架预设 | 无 / Other | 不要选 Next/Nuxt 之类的预设 |
+| 根目录 | `/`（默认） | |
+| 安装命令 | `npm install --include=dev` | 已写进 `edgeone.json`；显式带上 devDependencies，防止平台以 `NODE_ENV=production` 跑时跳过 esbuild |
+| 构建命令 | `npm run eo:build` | 已写进 `edgeone.json` 的 `buildCommand` |
+| 输出目录 | `dist` | 已写进 `edgeone.json` 的 `outputDirectory` |
+| Node 版本 | `20.18.0` | 平台预装版本之一，与 `edgeone.json` 的 `nodeVersion` 一致 |
+
+`edgeone.json` 里的 `buildCommand / installCommand / outputDirectory / nodeVersion` 会覆盖控制台配置，
+所以即使控制台留空，构建也会按仓库里的配置跑。构建过程做两件事：
+把 `public/` 复制成 `dist/`，把 `src/edgeone-entry.ts` 打成 `cloud-functions/[[default]].js`。
+平台会同时收走 `dist/`（静态站）和仓库根的 `cloud-functions/`（云函数），
+**不需要把 `cloud-functions/` 提交进仓库**（已在 `.gitignore` 里）。
+
+环境变量（控制台的「项目设置 → 环境变量」）：
+
+| 变量 | 必填 | 作用 |
+| --- | --- | --- |
+| `CRON_TOKEN` | 可选 | 配了之后 `/api/cron/tick?token=` 必须带同一个值；不配则按 5 分钟一次限流放行 |
+| `ADMIN_SECRET` | 可选 | 覆盖会话签名密钥 |
+| `SITE_NAME` | 可选 | 展示用站点名 |
+
+**不要配 `EPAY_STORE`**：默认就是 `edgeone`（只用 Blob，拿不到直接报错，避免静默退化成内存）。
+
+首次部署完成后，浏览器或 curl 访问一次 `POST /install` 建管理员与默认分组（见 4.3），
+之后每次 push 到 `edgeone` 都会自动重新构建并上线。**Blob 里的数据不会因为重新部署而丢**，
+所以日常改代码不需要重新初始化，也不会清空订单。
+
+> 构建产物里没有 `_routes.json` / `_worker.js`，也不跑 `wrangler`：
+> 这个分支把 `wrangler` 依赖去掉了（干净安装 10 个包、约 4 秒），构建只依赖 esbuild。
+
+### 4.2 命令行部署（不用 GitHub 时）
+
+#### 1. 装依赖 + 本地验证
 
 ```bash
 npm i
@@ -163,12 +198,12 @@ npm test                 # = EPAY_SERVER=eo node test/e2e.mjs，168 条断言
 本地手动看界面：
 
 ```bash
-npm run eo:dev           # http://localhost:8787，数据在内存里
+npm run dev              # http://localhost:8787，数据在内存里
 curl -X POST localhost:8787/install -H 'content-type: application/json' \
      -d '{"username":"admin","password":"admin12345"}'
 ```
 
-### 2. 构建
+#### 2. 构建
 
 ```bash
 npm run eo:build
@@ -182,7 +217,7 @@ cloud-functions/[[default]].js  函数包（约 185 KB，含 Blob SDK）
 cloud-functions/index.js        `/` 的入口（[[default]] 不匹配根路径）
 ```
 
-### 3. 生成路由表（**必做，漏了全站 404**）
+#### 3. 生成路由表（**必做，漏了全站 404**）
 
 ```bash
 npx edgeone makers generate-routes
@@ -200,7 +235,7 @@ npx edgeone makers generate-routes
 
 顺序错了会表现为「静态资源 200，首页/接口/后台全 404」。
 
-### 4. 部署
+#### 4. 部署
 
 ```bash
 npx edgeone login                 # 或跳过，直接带 token
@@ -223,7 +258,7 @@ npm run eo:deploy -- -n epay-pages -t "$EDGEONE_TOKEN" -a overseas --skip-ai-gat
 - 部署会清理 `.edgeone/`；上一次中断残留会报 `safe-delete broker denied delete`，
   先 `rm -rf .edgeone` 再重跑
 
-### 5. 初始化（部署后第一件事）
+### 4.3 初始化（部署后第一件事，两种方式都要做）
 
 ```bash
 curl -X POST https://<你的域名>/install \
@@ -231,21 +266,12 @@ curl -X POST https://<你的域名>/install \
   -d '{"username":"admin","password":"你的密码"}'
 ```
 
-返回 `{ code: 0, data: { cron_token } }`，记下 `cron_token`。
+返回 `{ code: 0, data: { cron_token } }`，记下 `cron_token`（后台通知重试用的那个，与 `CRON_TOKEN` 无关）。
 初始化会同时写入：管理员、`syskey`、站点名、注册开关、渠道映射、`cron_token`，以及**默认分组 `g/1`**
 （原 `migrate-v2.sql` 的职责，漏了会让后台新建的分组抢占 id=1，把所有商户套上错误费率）。
+重复调用会返回「系统已初始化」，不会覆盖数据。
 
-### 6. 环境变量（项目设置里配）
-
-| 变量 | 作用 |
-| --- | --- |
-| `CRON_TOKEN` | 平台定时任务的访问口令，与 `edgeone.json` 里 schedules 的 `token` 一致 |
-| `ADMIN_SECRET` | 可选，覆盖会话签名密钥（默认用库里的 `syskey`） |
-| `SITE_NAME` | 可选，仅展示用 |
-
-`EPAY_STORE` **不要设置**：默认就是 `edgeone`（只用 Blob，拿不到直接报错）。本地脚本会自动设成 `memory`。
-
-### 7. 定时任务
+### 4.4 定时任务
 
 `edgeone.json` 默认一条：
 
@@ -253,7 +279,12 @@ curl -X POST https://<你的域名>/install \
 {"name":"epay-cron","cron":"0 3 * * *","path":"/api/cron/tick?token=change-me","method":"GET","timezone":"Asia/Shanghai"}
 ```
 
-把 `change-me` 换成你的 `CRON_TOKEN`，否则这个任务一直 401（不影响收款）。
+`token=change-me` 是**故意留在仓库里的占位值**：`edgeone.json` 要提交进 Git，
+把真口令写进去等于把密钥推上 GitHub。所以 `/api/cron/tick` 的口令是可选的：
+
+- 控制台配了 `CRON_TOKEN` → 必须与 URL 里的 `token` 一致，否则 403（此时需要你自行把 URL 改成真值，
+  或者把 `CRON_TOKEN` 留空）
+- 没配 `CRON_TOKEN` → 放行，但用 Blob 记时间戳**限流成 5 分钟一次**（返回 429 表示被限流）
 
 免费版 cron **最小间隔是 1 天**，所以真正的分钟级靠两条兜底：
 
@@ -296,13 +327,15 @@ curl -X POST https://<你的域名>/install \
 | `src/routes/{admin,user,misc,features,channel,vmqcompat,onebot}.ts` | 135 处 SQL → repo 调用（字段集保持不变） |
 | `src/index.ts` | 去掉 `ASSETS` 回退（EdgeOne 静态优先），兜底改 404 |
 | `test/e2e.mjs` | 支持 `EPAY_SERVER=eo`：改用 `eo-local.mjs` + 内存存储，断言一条没删 |
-| `package.json` | 新增 `@edgeone/pages-blob`、`eo:*` / `typecheck` 脚本；`test` 默认跑 EO 模式，`test:cf` 留给 main 分支 |
+| `package.json` | 新增 `@edgeone/pages-blob`；加 `eo:*` / `typecheck` 脚本；`test` 改为 EO 模式；**移除 `wrangler` 依赖**（干净安装从 48 个包 / 263 MB 降到 10 个包 / 46 MB，构建 4 秒） |
+| `edgeone.json` | 增加 `buildCommand` / `installCommand`，让控制台零配置也能构建；`cloudFunctions` 改为文档要求的 `nodejs.maxDuration` 结构 |
 | `README.md` | 补分支说明与 EdgeOne 部署入口 |
 
 ### 保留不动（仅作对照）
 
 `wrangler.toml`、`schema.sql`、`migrate-v2.sql`、`scripts/build.mjs`。
-这个分支上 `npm run dev`（wrangler）和 D1 相关脚本**不可用**，也不建议用它们部署。
+这个分支上不跑 wrangler、不用 D1：`npm run dev` 已改为 `node scripts/eo-local.mjs`（本地 EdgeOne 模拟），
+`schema.sql` / `migrate-v2.sql` / `wrangler.toml` 只作对照，不参与部署。
 
 ---
 
@@ -322,6 +355,25 @@ curl -X POST https://<你的域名>/install \
 6. **后台关键词搜索是全量扫描**（按天倒序），订单量很大时会变慢；按状态/分页走的是统计计数，不受影响。
 7. **D1 存量数据不会自动迁移**。Blob 版是从空库开始；
    要搬历史数据，按 `schema.sql` 的列导出 JSON，再按第二节的键空间写入（或写个一次性导入脚本）。
+
+### 连 GitHub 自动部署的注意点
+
+1. **分支必须选 `edgeone`**。`main` 是 Cloudflare 版：产物是 `dist/_worker.js` + `_routes.json`，
+   没有 `cloud-functions/`，在 EdgeOne 上只会变成一堆静态文件 + 全站 404。
+2. **数据不随部署丢失**。Blob 里的 key 独立于构建产物，改代码重新部署后订单、商户、配置都还在；
+   只有第一次部署需要 `POST /install`。
+3. **构建命令读仓库里的 `edgeone.json`**，控制台留空也会按 `npm run eo:build` 跑；
+   但控制台如果被手动改过（例如选了 Next.js 预设），会以控制台为准，记得核对。
+4. **`cloud-functions/` 不要提交**（已在 `.gitignore`）。平台在构建完成后从工作区读取它；
+   如果你本地提交了旧的构建产物，反而可能盖掉新构建的结果。
+5. **构建时间**约 10 秒（装依赖 4s + esbuild 2s + 复制静态资源）。构建失败会在控制台看到完整日志，
+   最常见原因是 Node 版本被设成了非 20.x。
+6. **生产分支要选 `edgeone`**。控制台把「生产」环境绑定到一个分支（默认可能是仓库的默认分支 `main`）。
+   如果创建项目时只能选 `main`，两个办法：把仓库默认分支改成 `edgeone`，或者继续用命令行部署（4.2），
+   Git 集成只用来出预览环境。
+7. **万一部署后全站 404**（静态资源 200、HTML 和接口 404），说明函数路由没被登记。
+   把构建命令改成 `npm run eo:build && npx edgeone makers generate-routes` 再重试；
+   正常情况下平台会自己根据 `cloud-functions/` 生成路由，不需要这一步。
 
 ### 容易踩的
 

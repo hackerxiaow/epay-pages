@@ -7,15 +7,13 @@
   },
   "scripts": {
     "test": "EPAY_SERVER=eo node test/e2e.mjs",
-    "test:cf": "node test/e2e.mjs",
-    "test:eo": "EPAY_SERVER=eo node test/e2e.mjs",
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.mjs",
-    "dev": "wrangler dev --port 8787",
     "eo:build": "node scripts/eo-build.mjs",
     "eo:dev": "node scripts/eo-local.mjs",
-    "eo:routes": "edgeone makers generate-routes",
-    "eo:deploy": "node scripts/eo-build.mjs && edgeone makers generate-routes && edgeone makers deploy"
+    "eo:routes": "npx edgeone makers generate-routes",
+    "eo:deploy": "node scripts/eo-build.mjs && npx edgeone makers generate-routes && npx edgeone makers deploy",
+    "dev": "node scripts/eo-local.mjs"
   },
   "keywords": [],
   "author": "",
@@ -31,8 +29,10 @@
     "@cloudflare/workers-types": "^5.20260927.1",
     "@types/blueimp-md5": "^2.18.2",
     "esbuild": "^0.28.2",
-    "typescript": "^7.0.2",
-    "wrangler": "^4.141.0"
+    "typescript": "^7.0.2"
   },
-  "type": "module"
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
 }
