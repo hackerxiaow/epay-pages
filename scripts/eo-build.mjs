@@ -47,8 +47,22 @@ const esbuild = await import('esbuild').catch(() =>
 const outdir = p('cloud-functions');
 mkdirSync(outdir, { recursive: true });
 
+/** 构建标识：commit 短哈希 + 是否有未提交改动 + 构建时间，注入到产物里 */
+function buildId() {
+  let sha = 'unknown';
+  let dirty = '';
+  try {
+    sha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    if (execSync('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()) dirty = '+dirty';
+  } catch {}
+  const t = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  return `${sha}${dirty} ${t}`;
+}
+
 await esbuild.build({
   entryPoints: [p('src/edgeone-entry.ts')],
+  define: { __EPAY_BUILD__: JSON.stringify(buildId()) },
+  define: { __EPAY_BUILD__: JSON.stringify(buildId()) },
   outfile: join(outdir, '[[default]].js'),
   bundle: true,
   format: 'esm',

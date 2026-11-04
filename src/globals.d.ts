@@ -5,3 +5,9 @@
 declare const process: {
   env: Record<string, string | undefined>;
 };
+
+/** 由 scripts/eo-build.mjs 通过 esbuild define 注入：commit 短哈希 + 构建时间 */
+declare const __EPAY_BUILD__: string;
+
+/** 由 scripts/eo-build.mjs 通过 esbuild define 注入：commit 短哈希 + 构建时间 */
+declare const __EPAY_BUILD__: string;

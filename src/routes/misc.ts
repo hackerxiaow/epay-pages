@@ -6,13 +6,16 @@ import { randomHex, now } from '../lib/util';
 import { cfgSetMany, ensureDefaultGroup, healthCheck, statTotals, statWindow, userCount } from '../lib/repo';
 import { runCron } from '../lib/cron';
 
+/** 构建标识（由构建脚本注入），用来确认线上跑的是哪一次提交 */
+const BUILD = typeof __EPAY_BUILD__ === 'undefined' ? 'dev' : __EPAY_BUILD__;
+
 export const misc = new Hono<{ Bindings: Bindings }>();
 
 // ---------- 健康检查 (公开): 确认 Blob 凭据与初始化状态 ----------
 misc.get('/api/health', async (c) => {
   try {
     const h = await healthCheck();
-    return c.json({ ok: true, ...h, build: 'b-20261104', time: now() });
+    return c.json({ ok: true, ...h, build: BUILD, time: now() });
   } catch (e) {
     const err = e as { message?: string; hint?: string };
     return c.json({ ok: false, error: err.message || String(e), hint: err.hint, time: now() }, 503);
