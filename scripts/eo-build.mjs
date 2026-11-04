@@ -16,9 +16,11 @@
  *   cloud-functions/[[default]].js  兜底路由
  *   cloud-functions/index.js        `/`
  */
-import { cpSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const p = (...xs) => join(root, ...xs);
@@ -66,7 +68,31 @@ function buildId() {
     }
   }
   const t = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  return `${sha}${dirty} ${t}`;
+  return `${sha}${dirty} ${contentHash()} ${t}`;
+}
+
+/**
+ * 源码内容哈希：只取 src/、edgeone.json、package.json。
+ * 平台构建环境里没有 .git，拿不到 commit 号，但这个哈希两边算出来是一样的 ——
+ * 拿它跟线上 /api/health 的 build 字段一比，就知道线上跑的代码是否等于仓库里的代码。
+ */
+function contentHash() {
+  const files = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name.endsWith('.ts')) files.push(full);
+    }
+  };
+  walk(p('src'));
+  files.push(p('edgeone.json'), p('package.json'));
+  const h = createHash('sha256');
+  for (const f of files.sort()) {
+    h.update(relative(root, f));
+    h.update(readFileSync(f));
+  }
+  return h.digest('hex').slice(0, 8);
 }
 
 await esbuild.build({
