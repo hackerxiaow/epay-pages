@@ -12,7 +12,7 @@ export const misc = new Hono<{ Bindings: Bindings }>();
 misc.get('/api/health', async (c) => {
   try {
     const h = await healthCheck();
-    return c.json({ ok: true, ...h, time: now() });
+    return c.json({ ok: true, ...h, build: 'b-20261104', time: now() });
   } catch (e) {
     const err = e as { message?: string; hint?: string };
     return c.json({ ok: false, error: err.message || String(e), hint: err.hint, time: now() }, 503);

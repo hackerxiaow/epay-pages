@@ -31,8 +31,8 @@ registerPlugin(tronUsdtPlugin);
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// 探针：仅用于确认平台在构建后读取函数产物
-const BUILD_PROBE = 'probe-1';
+// 探针：确认线上跑的是仓库里提交的那份函数产物
+const BUILD_PROBE = 'probe-b2';
 
 app.route('/', proto);
 app.route('/', channelRoutes);
@@ -46,7 +46,7 @@ app.route('/', onebot);
 // 存储未就绪时给出可读提示，而不是裸 500
 app.use('*', async (c, next) => {
   await next();
-  c.res.headers.set('x-epay-probe', BUILD_PROBE);
+  c.header('x-epay-probe', BUILD_PROBE);
 });
 
 app.onError((err, c) => {
