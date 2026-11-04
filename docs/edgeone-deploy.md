@@ -158,6 +158,7 @@ GET /api/cashier/status      → o/<trade_no>（1 次）
 | 构建命令 | `npm run eo:build` | 已写进 `edgeone.json` 的 `buildCommand` |
 | 输出目录 | `dist` | 已写进 `edgeone.json` 的 `outputDirectory` |
 | Node 版本 | `20.18.0` | 平台预装版本之一，与 `edgeone.json` 的 `nodeVersion` 一致 |
+| 部署地域 | **香港 `ap-hongkong`** | 写在 `edgeone.json` 的 `cloudFunctions.regions.overseas`；控制台的「部署地域」是同一个开关，两边一致 |
 
 `edgeone.json` 里的 `buildCommand / installCommand / outputDirectory / nodeVersion` 会覆盖控制台配置，
 所以即使控制台留空，构建也会按仓库里的配置跑。构建过程做两件事：
@@ -200,6 +201,45 @@ GET /api/cashier/status      → o/<trade_no>（1 次）
 > **部署后不是瞬间生效**：控制台显示 Success 之后，生产域名还要再等 30~120 秒
 > 才切到新函数版本。期间用带查询串的地址（`/api/health?t=1`）可以绕开边缘缓存，
 > 同时也能确认是不是旧版本。边缘会缓存 404，排查时记得破缓存。
+
+### 4.1.1 部署地域与单请求超时
+
+参照 `ai-gateway` 的 edgeone 分支，本项目采用同样的写法：
+
+```json
+{
+  "cloudFunctions": {
+    "maxDuration": 120,
+    "regions": { "overseas": ["ap-hongkong"] }
+  }
+}
+```
+
+- `maxDuration`：单次请求最长执行时间，上限 120 秒（schema: `cloudFunctions.maxDuration` 10~120）。
+- `regions.overseas`：海外站函数部署地域，可选 `ap-hongkong` / `ap-tokyo` / `ap-singapore` / `ap-seoul` /
+  `ap-bangkok` / `ap-jakarta` 等。`mainland` 是大陆地域（`ap-beijing` / `ap-guangzhou` / `ap-shanghai` / `ap-chengdu` / `ap-nanjing`）。
+- 控制台「部署地域」与 `edgeone.json` 是同一个开关：控制台改了也要同步改配置文件，
+  否则下次构建会被仓库里的配置覆盖回去。
+
+**怎么确认线上真的在目标地域、真的是 120 秒**：
+
+```bash
+# 1) 地域：函数自报 context.server.region
+curl "https://<你的域名>/api/health"
+# → {"store":"edgeone","region":"ap-hongkong","build":"<commit> <hash> <time>",...}
+
+# 2) 超时：阶梯实测（1s → 30s → 65s → 110s → 120s 逐级加压）
+node scripts/verify-deploy.mjs --base=https://<你的域名> \
+  --admin-user=admin --admin-pass='<密码>'
+node scripts/verify-deploy.mjs --base=https://<你的域名> --full   # 额外探测 125s，预期 504
+```
+
+延时探针是 `/admin/api/selftest/delay?ms=N`（受管理员会话保护）：睡 N 毫秒并回吐真实耗时。
+实测结果：120s 请求成功返回，125s 在 123.5s 被平台掐成 **504** —— 120s 就是硬上限。
+
+> ⚠️ **大陆网络直连 `*.edgeone.dev` 预置域名会返回 401**（实测确认），
+> 验证脚本需要挂代理：`HTTPS_PROXY=http://127.0.0.1:10808 node scripts/verify-deploy.mjs`。
+> 正式对外请绑自定义域名，境内访问才不受影响。
 
 ### 4.2 命令行部署（不用 GitHub 时）
 
@@ -468,6 +508,11 @@ curl -X POST https://<你的域名>/install \
    并用 `/api/health` 里的 `build` 字段核对 commit。
 9. **`npx edgeone makers generate-routes` 不是解药**：它只处理 SSR / Edge Function 的
    `.edgeone/server-handler`，普通 `cloud-functions/` handler 由平台按目录结构直接映射。
+10. **Git 关联的项目不能用 CLI 部署**：`edgeone makers deploy` 要求项目是「direct upload」类型，
+    本项目 `Provider: Github`，走 push 自动部署这条链路。用 CLI 硬部署会绕开 Git 关联、
+    让控制台与仓库状态脱节。
+11. **大陆直连预置域名返回 401**：这是 `*.edgeone.dev` 的限制，不是代码问题；
+    验证要挂代理，正式使用要绑自定义域名。
 
 ### 容易踩的
 
