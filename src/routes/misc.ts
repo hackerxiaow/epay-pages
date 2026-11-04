@@ -3,10 +3,21 @@ import { Bindings, hashPassword } from '../lib/auth';
 import { getConfig, getConfigAll, OrderRow } from '../lib/db';
 import { sendMerchantNotifySafe } from '../lib/orderflow';
 import { randomHex, now } from '../lib/util';
-import { cfgSetMany, ensureDefaultGroup, statTotals, statWindow, userCount } from '../lib/repo';
+import { cfgSetMany, ensureDefaultGroup, healthCheck, statTotals, statWindow, userCount } from '../lib/repo';
 import { runCron } from '../lib/cron';
 
 export const misc = new Hono<{ Bindings: Bindings }>();
+
+// ---------- 健康检查 (公开): 确认 Blob 凭据与初始化状态 ----------
+misc.get('/api/health', async (c) => {
+  try {
+    const h = await healthCheck();
+    return c.json({ ok: true, ...h, time: now() });
+  } catch (e) {
+    const err = e as { message?: string; hint?: string };
+    return c.json({ ok: false, error: err.message || String(e), hint: err.hint, time: now() }, 503);
+  }
+});
 
 // ---------- 初始化 (仅首次可调用) ----------
 misc.post('/install', async (c) => {

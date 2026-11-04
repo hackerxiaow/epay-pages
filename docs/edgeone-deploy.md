@@ -172,6 +172,8 @@ GET /api/cashier/status      → o/<trade_no>（1 次）
 | `CRON_TOKEN` | 可选 | 配了之后 `/api/cron/tick?token=` 必须带同一个值；不配则按 5 分钟一次限流放行 |
 | `ADMIN_SECRET` | 可选 | 覆盖会话签名密钥 |
 | `SITE_NAME` | 可选 | 展示用站点名 |
+| `EPAY_BLOB_PROJECT_ID` | 兜底 | 形如 `makers-xxxxxxxx`，仅在 Blob 凭据没被平台注入时需要 |
+| `EPAY_BLOB_TOKEN` | 兜底 | EdgeOne API Token，与上一项配对使用 |
 
 **不要配 `EPAY_STORE`**：默认就是 `edgeone`（只用 Blob，拿不到直接报错，避免静默退化成内存）。
 
@@ -258,7 +260,49 @@ npm run eo:deploy -- -n epay-pages -t "$EDGEONE_TOKEN" -a overseas --skip-ai-gat
 - 部署会清理 `.edgeone/`；上一次中断残留会报 `safe-delete broker denied delete`，
   先 `rm -rf .edgeone` 再重跑
 
-### 4.3 初始化（部署后第一件事，两种方式都要做）
+### 4.3 部署后自检（先看这一条，比猜 500 快）
+
+```bash
+curl https://<你的域名>/api/health
+```
+
+正常返回：
+
+```json
+{ "ok": true, "store": "edgeone", "initialized": false, "time": 1730000000 }
+```
+
+三种异常：
+
+| 返回 | 含义 | 处理 |
+| --- | --- | --- |
+| `503` + `Missing: deployCredential` | 平台没把 Blob 凭据注入到函数里 | 见 4.3.1 |
+| `503` + 其它 error | 有凭据但调不通（配额、网络、store 名） | 把 error 贴出来 |
+| `404` | 请求没进函数（被当静态资源了） | 见 4.5 |
+
+`initialized: false` 表示还没跑 `/install`。
+
+#### 4.3.1 Blob 凭据没注入怎么办
+
+SDK 的凭据有两条来源：平台在部署时替换函数包里的 `{{PAGES_BLOB_DEPLOY_CREDENTIAL}}` 占位符，
+或运行时读环境变量 `PAGES_BLOB_DEPLOY_CREDENTIAL`。两条都没有时会报 `Missing: deployCredential`。
+
+按顺序排查：
+
+1. **控制台确认项目已启用 Blob / 对象存储**（免费版有 1 GB 额度，但需要项目开启这个能力）。
+2. **确认函数真的跑在 Node 云函数环境**：构建日志里应能看到 `cloud-functions/[[default]].js`；
+   请求 `/` 返回 503 说明函数在跑、只是存储没准备好；返回 404 则是另一个问题（见 4.5）。
+3. **显式凭据兜底**：在项目环境变量里加
+
+   | 变量 | 取值 |
+   | --- | --- |
+   | `EPAY_BLOB_PROJECT_ID` | 项目 ID，控制台项目设置里能看到，形如 `makers-xxxxxxxx` |
+   | `EPAY_BLOB_TOKEN` | EdgeOne API Token（控制台「API Token」页面生成） |
+
+   我们的 `blob-store.ts` 在检测到 `MISSING_ENVIRONMENT` 时会自动改用
+   `getStore({ name: 'epay', projectId, token })`，不需要改代码，重新部署即可。
+
+### 4.4 初始化（部署后第一件事，两种方式都要做）
 
 ```bash
 curl -X POST https://<你的域名>/install \
@@ -271,7 +315,7 @@ curl -X POST https://<你的域名>/install \
 （原 `migrate-v2.sql` 的职责，漏了会让后台新建的分组抢占 id=1，把所有商户套上错误费率）。
 重复调用会返回「系统已初始化」，不会覆盖数据。
 
-### 4.4 定时任务
+### 4.5 定时任务
 
 `edgeone.json` 默认一条：
 
@@ -371,9 +415,13 @@ curl -X POST https://<你的域名>/install \
 6. **生产分支要选 `edgeone`**。控制台把「生产」环境绑定到一个分支（默认可能是仓库的默认分支 `main`）。
    如果创建项目时只能选 `main`，两个办法：把仓库默认分支改成 `edgeone`，或者继续用命令行部署（4.2），
    Git 集成只用来出预览环境。
-7. **万一部署后全站 404**（静态资源 200、HTML 和接口 404），说明函数路由没被登记。
-   把构建命令改成 `npm run eo:build && npx edgeone makers generate-routes` 再重试；
-   正常情况下平台会自己根据 `cloud-functions/` 生成路由，不需要这一步。
+7. **万一部署后全站 404**（静态资源 200、HTML 和接口 404），先分清是哪种 404：
+   - 页面标题是 `Tencent Edgeone`（平台 404 页）→ 函数没被登记。看构建日志确认
+     `cloud-functions/[[default]].js` 有没有生成；再确认项目根目录设置是 `/`、
+     输出目录是 `dist`、函数目录没被改成别的名字。
+   - 页面是纯文本 `Not Found` → 函数跑起来了，但路由没匹配（少见，通常是路径大小写问题）。
+   注意 `npx edgeone makers generate-routes` **不是**这个场景的解药：它只处理 SSR / Edge Function
+   的 `.edgeone/server-handler`，普通 `cloud-functions/` handler 由平台按目录直接映射。
 
 ### 容易踩的
 

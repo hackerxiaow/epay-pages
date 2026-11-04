@@ -40,6 +40,16 @@ app.route('/', features);
 app.route('/', vmqCompat);
 app.route('/', onebot);
 
+// 存储未就绪时给出可读提示，而不是裸 500
+app.onError((err, c) => {
+  const e = err as { code?: string; message?: string; hint?: string };
+  if (e.code === 'STORE_CONFIG_MISSING') {
+    return c.text(`存储未就绪（EdgeOne Blob）\n\n${e.message}\n\n${e.hint || ''}`, 503);
+  }
+  console.error('[app] unhandled error:', err);
+  return c.text('Internal Server Error', 500);
+});
+
 // 兜底 404
 //
 // Cloudflare 版的静态资源要经过 Worker 转发（`env.ASSETS.fetch`）；

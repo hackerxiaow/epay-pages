@@ -273,6 +273,16 @@ export async function cfgSetMany(entries: Record<string, string>): Promise<void>
   });
 }
 
+/**
+ * 健康检查：验证 Blob 凭据、读写权限与初始化状态。
+ * 部署后第一件事就该访问 /api/health，比看 500 页面快得多。
+ */
+export async function healthCheck(): Promise<{ store: string; initialized: boolean }> {
+  const cfg = await cfgAll();
+  await s().keys('u/'); // 顺带验证 list 权限
+  return { store: s().kind, initialized: !!cfg.admin_user };
+}
+
 /* ================================== 商户 ================================== */
 
 export async function userByUid(uid: number): Promise<UserRow | null> {
