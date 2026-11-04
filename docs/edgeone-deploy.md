@@ -161,9 +161,22 @@ GET /api/cashier/status      → o/<trade_no>（1 次）
 
 `edgeone.json` 里的 `buildCommand / installCommand / outputDirectory / nodeVersion` 会覆盖控制台配置，
 所以即使控制台留空，构建也会按仓库里的配置跑。构建过程做两件事：
-把 `public/` 复制成 `dist/`，把 `src/edgeone-entry.ts` 打成 `cloud-functions/[[default]].js`。
-平台会同时收走 `dist/`（静态站）和仓库根的 `cloud-functions/`（云函数），
-**不需要把 `cloud-functions/` 提交进仓库**（已在 `.gitignore` 里）。
+把 `public/` 复制成 `dist/`，把 `src/edgeone-entry.ts` 打成自包含的
+`cloud-functions/[[default]].js` + `cloud-functions/index.js`。
+
+> ### ⚠️ 关于 `cloud-functions/` 的两条硬约束（都是实测踩出来的）
+>
+> 1. **必须提交进仓库**。平台在跑构建命令**之前**就扫描仓库里的 `cloud-functions/` 目录，
+>    按文件路径登记路由（`index.js` → `/`，`[[default]].js` → `/*`）。
+>    目录不存在 = 一条函数路由都不登记 → 静态资源 200、其余路径全是平台 404。
+>    这就是「不提交 `cloud-functions/` 时全站 404」的根因。
+> 2. **文件必须自包含**。平台不会替你打包依赖：写成
+>    `import { onRequest } from '../src/edgeone-entry.ts'` 的薄壳会直接 502
+>    （找不到 `../src`）。所以产物里必须把所有依赖都内联（esbuild bundle）。
+>
+> 内容方面不用担心过期：平台部署的是**构建命令重新生成的产物**，
+> 仓库里那份只是「让平台认得出这个函数目录」。仓库里的 `.githooks/pre-commit`
+> 会在你提交涉及 `src/` 的改动时自动重建并 stage 这份产物，两边都不会过期。
 
 环境变量（控制台的「项目设置 → 环境变量」）：
 
@@ -177,12 +190,16 @@ GET /api/cashier/status      → o/<trade_no>（1 次）
 
 **不要配 `EPAY_STORE`**：默认就是 `edgeone`（只用 Blob，拿不到直接报错，避免静默退化成内存）。
 
-首次部署完成后，浏览器或 curl 访问一次 `POST /install` 建管理员与默认分组（见 4.3），
+首次部署完成后，浏览器或 curl 访问一次 `POST /install` 建管理员与默认分组（见 4.4），
 之后每次 push 到 `edgeone` 都会自动重新构建并上线。**Blob 里的数据不会因为重新部署而丢**，
 所以日常改代码不需要重新初始化，也不会清空订单。
 
 > 构建产物里没有 `_routes.json` / `_worker.js`，也不跑 `wrangler`：
 > 这个分支把 `wrangler` 依赖去掉了（干净安装 10 个包、约 4 秒），构建只依赖 esbuild。
+>
+> **部署后不是瞬间生效**：控制台显示 Success 之后，生产域名还要再等 30~120 秒
+> 才切到新函数版本。期间用带查询串的地址（`/api/health?t=1`）可以绕开边缘缓存，
+> 同时也能确认是不是旧版本。边缘会缓存 404，排查时记得破缓存。
 
 ### 4.2 命令行部署（不用 GitHub 时）
 
@@ -263,14 +280,26 @@ npm run eo:deploy -- -n epay-pages -t "$EDGEONE_TOKEN" -a overseas --skip-ai-gat
 ### 4.3 部署后自检（先看这一条，比猜 500 快）
 
 ```bash
-curl https://<你的域名>/api/health
+curl "https://<你的域名>/api/health?t=$(date +%s)"
 ```
 
 正常返回：
 
 ```json
-{ "ok": true, "store": "edgeone", "initialized": false, "time": 1730000000 }
+{
+  "ok": true,
+  "store": "edgeone",
+  "initialized": false,
+  "build": "1a73e19 2026-11-04 13:35:36",
+  "time": 1730000000
+}
 ```
+
+| 字段 | 含义 |
+| --- | --- |
+| `store` | `edgeone` = 真的连着 Blob；`memory` = 降级到内存（生产环境不该出现） |
+| `initialized` | `false` = 还没跑过 `/install` |
+| `build` | 构建标识：commit 短哈希 + 构建时间。**和 GitHub 上的提交对不上 = 线上跑的是旧版本** |
 
 三种异常：
 
@@ -278,9 +307,10 @@ curl https://<你的域名>/api/health
 | --- | --- | --- |
 | `503` + `Missing: deployCredential` | 平台没把 Blob 凭据注入到函数里 | 见 4.3.1 |
 | `503` + 其它 error | 有凭据但调不通（配额、网络、store 名） | 把 error 贴出来 |
-| `404` | 请求没进函数（被当静态资源了） | 见 4.5 |
+| 平台 404 页（`<title>Tencent EdgeOne</title>`） | 请求没进函数：函数目录没被登记 | 见 4.3.2 |
 
-`initialized: false` 表示还没跑 `/install`。
+> 测试线上接口记得带个查询串破缓存：边缘会把 404 和旧响应缓存住，
+> 刚部署完直接访问可能拿到上一次的结果。`?t=1` 即可。
 
 #### 4.3.1 Blob 凭据没注入怎么办
 
@@ -290,8 +320,8 @@ SDK 的凭据有两条来源：平台在部署时替换函数包里的 `{{PAGES_
 按顺序排查：
 
 1. **控制台确认项目已启用 Blob / 对象存储**（免费版有 1 GB 额度，但需要项目开启这个能力）。
-2. **确认函数真的跑在 Node 云函数环境**：构建日志里应能看到 `cloud-functions/[[default]].js`；
-   请求 `/` 返回 503 说明函数在跑、只是存储没准备好；返回 404 则是另一个问题（见 4.5）。
+2. **确认函数真的跑在 Node 云函数环境**：请求 `/` 返回 503 说明函数在跑、只是存储没准备好；
+   返回平台 404 则是另一个问题（见 4.3.2）。
 3. **显式凭据兜底**：在项目环境变量里加
 
    | 变量 | 取值 |
@@ -301,6 +331,20 @@ SDK 的凭据有两条来源：平台在部署时替换函数包里的 `{{PAGES_
 
    我们的 `blob-store.ts` 在检测到 `MISSING_ENVIRONMENT` 时会自动改用
    `getStore({ name: 'epay', projectId, token })`，不需要改代码，重新部署即可。
+
+#### 4.3.2 全站 404（平台 404 页）怎么查
+
+静态资源 200、HTML 和接口全是平台 404 页 → **函数一条路由都没登记**。
+按顺序查：
+
+1. `git ls-files cloud-functions` 必须有输出 —— 平台在构建命令**之前**扫描仓库里的
+   `cloud-functions/` 目录，目录不存在就不会登记任何函数路由。
+2. 目录里有 `index.js`（对应 `/`）和 `[[default]].js`（对应 `/*`）两个文件。
+3. 这两个文件必须是**自包含**产物：不能有 `import '../src/...'` 之类指向目录外的引用，
+   平台不会帮你打包依赖（薄壳方案实测 502）。
+4. 部署详情（`DescribePagesDeployments` 的 `MetaData.routes`）里应能看到
+   `{"src":"^/$","server-name":"api-node"}` 和 `{"src":"^/(.*)$","server-name":"api-node"}`；
+   只有 `filesystem` 一条就说明函数没被识别。
 
 ### 4.4 初始化（部署后第一件事，两种方式都要做）
 
@@ -408,20 +452,22 @@ curl -X POST https://<你的域名>/install \
    只有第一次部署需要 `POST /install`。
 3. **构建命令读仓库里的 `edgeone.json`**，控制台留空也会按 `npm run eo:build` 跑；
    但控制台如果被手动改过（例如选了 Next.js 预设），会以控制台为准，记得核对。
-4. **`cloud-functions/` 不要提交**（已在 `.gitignore`）。平台在构建完成后从工作区读取它；
-   如果你本地提交了旧的构建产物，反而可能盖掉新构建的结果。
-5. **构建时间**约 10 秒（装依赖 4s + esbuild 2s + 复制静态资源）。构建失败会在控制台看到完整日志，
-   最常见原因是 Node 版本被设成了非 20.x。
-6. **生产分支要选 `edgeone`**。控制台把「生产」环境绑定到一个分支（默认可能是仓库的默认分支 `main`）。
+4. **`cloud-functions/` 必须提交**。平台在构建命令**之前**扫描仓库里的这个目录来登记路由；
+   不提交 = 没有函数路由 = 全站平台 404（静态资源仍 200，很有迷惑性）。
+   仓库里的 `.githooks/pre-commit` 会在提交 `src/` 改动时自动重建这份产物并 stage，
+   不需要手动 `npm run eo:build`。
+5. **函数产物必须自包含**。写成 `import '../src/xxx.ts'` 的薄壳会 502 ——
+   平台不打包依赖，所有依赖必须在产物里内联（esbuild bundle 已处理）。
+6. **构建时间**约 25 秒（装依赖 4s + esbuild 3s + 复制 5.5 MB 静态资源 + 平台打包）。
+   构建失败会在控制台看到完整日志，最常见原因是 Node 版本被设成了非 20.x。
+7. **生产分支要选 `edgeone`**。控制台把「生产」环境绑定到一个分支（默认可能是仓库的默认分支 `main`）。
    如果创建项目时只能选 `main`，两个办法：把仓库默认分支改成 `edgeone`，或者继续用命令行部署（4.2），
    Git 集成只用来出预览环境。
-7. **万一部署后全站 404**（静态资源 200、HTML 和接口 404），先分清是哪种 404：
-   - 页面标题是 `Tencent Edgeone`（平台 404 页）→ 函数没被登记。看构建日志确认
-     `cloud-functions/[[default]].js` 有没有生成；再确认项目根目录设置是 `/`、
-     输出目录是 `dist`、函数目录没被改成别的名字。
-   - 页面是纯文本 `Not Found` → 函数跑起来了，但路由没匹配（少见，通常是路径大小写问题）。
-   注意 `npx edgeone makers generate-routes` **不是**这个场景的解药：它只处理 SSR / Edge Function
-   的 `.edgeone/server-handler`，普通 `cloud-functions/` handler 由平台按目录直接映射。
+8. **部署完成 ≠ 立即生效**。控制台显示 Success 后，生产域名还要 30~120 秒才切到新函数版本；
+   边缘还会缓存 404 和旧响应。验证时用带查询串的地址（`?t=1`），
+   并用 `/api/health` 里的 `build` 字段核对 commit。
+9. **`npx edgeone makers generate-routes` 不是解药**：它只处理 SSR / Edge Function 的
+   `.edgeone/server-handler`，普通 `cloud-functions/` handler 由平台按目录结构直接映射。
 
 ### 容易踩的
 
@@ -447,6 +493,7 @@ curl -X POST https://<你的域名>/install \
 | `npm run typecheck` | 0 error |
 | `npm test`（EdgeOne 模式） | 168 通过 / 0 失败 |
 | `npm run eo:build` | 函数包 < 300 KB，dist ≈ 5.5 MB |
+| 部署后 `GET /api/health?t=1` | `{"ok":true,"store":"edgeone","initialized":false,"build":"<commit> ..."}` |
 | 部署后 `GET /` | 200，首页含「三网聚合」 |
 | 部署后 `GET /admin.html` | 200，`Cache-Control: no-cache` |
 | `POST /install` | 返回 `cron_token`，重复调用返回「系统已初始化」 |

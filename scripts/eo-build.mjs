@@ -49,12 +49,22 @@ mkdirSync(outdir, { recursive: true });
 
 /** 构建标识：commit 短哈希 + 是否有未提交改动 + 构建时间，注入到产物里 */
 function buildId() {
-  let sha = 'unknown';
+  // 平台构建环境里没有 .git，退回用 CI 注入的 commit 号；都没有就只留时间戳
+  let sha =
+    process.env.EDGEONE_COMMIT_SHA ||
+    process.env.GITHUB_SHA ||
+    process.env.CI_COMMIT_SHA ||
+    process.env.COMMIT_SHA ||
+    '';
   let dirty = '';
-  try {
-    sha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-    if (execSync('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()) dirty = '+dirty';
-  } catch {}
+  if (!sha) {
+    try {
+      sha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+      if (execSync('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()) dirty = '+dirty';
+    } catch {
+      sha = 'unknown';
+    }
+  }
   const t = new Date().toISOString().replace('T', ' ').slice(0, 19);
   return `${sha}${dirty} ${t}`;
 }
