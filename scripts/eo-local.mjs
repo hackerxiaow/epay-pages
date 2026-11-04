@@ -78,6 +78,7 @@ const server = createServer(async (req, res) => {
       request,
       env: process.env,
       clientIp: req.socket.remoteAddress?.replace('::ffff:', '') ?? '',
+      server: { region: process.env.EPAY_REGION || 'local' },
     });
     const headers = {};
     response.headers.forEach((v, k) => {

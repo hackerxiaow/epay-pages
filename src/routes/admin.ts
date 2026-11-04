@@ -115,6 +115,16 @@ admin.post('/api/orders/refund', async (c) => {
   return c.json({ code: r.ok ? 0 : -1, msg: r.msg });
 });
 
+// ---------- 自检: 延时探针（实测云函数单请求时长上限） ----------
+// 受 admin 会话保护；配合 scripts/verify-deploy.mjs 做阶梯实测
+admin.get('/api/selftest/delay', async (c) => {
+  const ms = Math.min(150000, Math.max(0, parseInt(c.req.query('ms') || '1000', 10) || 0));
+  const t0 = Date.now();
+  await new Promise((r) => setTimeout(r, ms));
+  c.header('Cache-Control', 'no-store');
+  return c.json({ code: 0, data: { requestedMs: ms, actualMs: Date.now() - t0 } });
+});
+
 // ---------- 渠道 ----------
 admin.get('/api/channels', async (c) => {
   const results = await channelAll();

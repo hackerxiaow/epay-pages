@@ -15,7 +15,9 @@ export const misc = new Hono<{ Bindings: Bindings }>();
 misc.get('/api/health', async (c) => {
   try {
     const h = await healthCheck();
-    return c.json({ ok: true, ...h, build: BUILD, time: now() });
+    const region =
+      c.req.header('x-epay-region') || c.req.header('x-edgeone-region') || c.req.header('x-scf-region') || '';
+    return c.json({ ok: true, ...h, region, build: BUILD, time: now() });
   } catch (e) {
     const err = e as { message?: string; hint?: string };
     return c.json({ ok: false, error: err.message || String(e), hint: err.hint, time: now() }, 503);

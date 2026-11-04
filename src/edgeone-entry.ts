@@ -22,6 +22,8 @@ interface EdgeOneContext {
   clientIp?: string;
   geo?: Record<string, unknown>;
   params?: Record<string, string>;
+  /** 部署地信息，Node 运行时里 server.region 是区域编码（如 ap-hongkong） */
+  server?: { region?: string };
 }
 
 const waitUntilPool = new Set<Promise<unknown>>();
@@ -72,6 +74,10 @@ async function materialize(ctx: EdgeOneContext): Promise<Request> {
   if (ctx.clientIp && !headers.get('cf-connecting-ip')) headers.set('cf-connecting-ip', ctx.clientIp);
   const country = String(ctx.geo?.countryCode ?? ctx.geo?.country ?? '').toUpperCase();
   if (country && !headers.get('cf-ipcountry')) headers.set('cf-ipcountry', country);
+
+  // 部署地域：函数自报，方便 /api/health 直接告诉你跑在哪个区
+  const region = String(ctx.server?.region ?? '').toLowerCase();
+  if (region && !headers.get('x-epay-region')) headers.set('x-epay-region', region);
 
   if (method === 'GET' || method === 'HEAD') {
     return new Request(req.url, { method, headers });
