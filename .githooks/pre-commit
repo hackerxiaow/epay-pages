@@ -1,0 +1,14 @@
+#!/bin/sh
+# 源码 / 配置改动后自动重建函数产物：EdgeOne 在构建命令之前读取 cloud-functions/，
+# 提交过期产物 = 线上继续跑旧代码。
+changed=$(git diff --cached --name-only)
+if echo "$changed" | grep -qE '^(src/|edgeone\.json|package(-lock)?\.json)'; then
+  echo "[pre-commit] 源码有改动，重建 cloud-functions/ ..."
+  if ! npm run eo:build >/tmp/eo-build.log 2>&1; then
+    echo "[pre-commit] 构建失败，已阻止提交："
+    tail -20 /tmp/eo-build.log
+    exit 1
+  fi
+  git add cloud-functions
+fi
+exit 0

@@ -13,7 +13,8 @@
     "eo:dev": "node scripts/eo-local.mjs",
     "eo:routes": "npx edgeone makers generate-routes",
     "eo:deploy": "node scripts/eo-build.mjs && npx edgeone makers generate-routes && npx edgeone makers deploy",
-    "dev": "node scripts/eo-local.mjs"
+    "dev": "node scripts/eo-local.mjs",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "keywords": [],
   "author": "",

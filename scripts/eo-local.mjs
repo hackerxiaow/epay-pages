@@ -17,11 +17,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
-const bundle = join(root, '.eo-build', '[[default]].js');
+const bundle = join(root, 'cloud-functions', '[[default]].js');
 const port = Number(process.env.PORT ?? 8787);
 
 if (!existsSync(bundle)) {
-  console.error('缺少 .eo-build/[[default]].js，先跑 npm run eo:build');
+  console.error('缺少 cloud-functions/[[default]].js，先跑 npm run eo:build');
   process.exit(1);
 }
 

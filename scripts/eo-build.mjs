@@ -4,12 +4,12 @@
  * 干三件事：
  *   1. 把 `public/` 整目录复制到 `dist/`（EdgeOne 的静态站根目录）
  *      —— 平台的静态资源优先于函数，admin.html / user.html / assets 全部直出，不占函数
- *   2. 用 esbuild 把 `src/edgeone-entry.ts` 打成本地可跑的 `.eo-build/[[default]].js`
- *      （依赖全部内联）
+ *   2. 用 esbuild 把 `src/edgeone-entry.ts` 打成自包含的 `cloud-functions/[[default]].js`
+ *      （依赖全部内联，平台直接使用这个文件，不会再帮你打包）
  *
- * 注意：线上部署**不用**这个产物。EdgeOne 在部署时会对仓库里的
- * `cloud-functions/index.js`、`cloud-functions/[[default]].js` 这两个薄壳做一次
- * esbuild 打包（平台在构建命令之前就读取函数目录，所以薄壳必须提交、且不能是过期产物）。
+ * ⚠️ 关键约束：EdgeOne 在构建命令**之前**就读取 `cloud-functions/` 并原样部署，
+ * 所以这两个文件必须提交进仓库，而且必须是最新的。改完 `src/` 记得重新构建 —— 
+ * 仓库里的 .githooks/pre-commit 会在提交时自动重建并 stage。
  *
  * 产物：
  *   dist/                           静态站
@@ -44,9 +44,7 @@ const esbuild = await import('esbuild').catch(() =>
   import(new URL('../node_modules/esbuild/lib/main.js', import.meta.url).href)
 );
 
-// 函数产物只用于本地 e2e / 自测：线上由平台从 cloud-functions/*.js 薄壳自行打包，
-// 所以这里写到 .eo-build（已 gitignore），不要去覆盖 cloud-functions/ 里的薄壳。
-const outdir = p('.eo-build');
+const outdir = p('cloud-functions');
 mkdirSync(outdir, { recursive: true });
 
 await esbuild.build({
@@ -77,6 +75,6 @@ function dirSize(dir) {
 }
 
 const fnBytes = statSync(join(outdir, '[[default]].js')).size;
-console.log(`\n✓ 本地函数包 .eo-build/[[default]].js  ${(fnBytes / 1024).toFixed(0)} KB`);
+console.log(`\n✓ 函数包 cloud-functions/[[default]].js  ${(fnBytes / 1024).toFixed(0)} KB`);
 console.log(`✓ 静态资源 dist/  ${(dirSize(dist) / 1024 / 1024).toFixed(2)} MB`);
-console.log('✓ cloud-functions/ 保持薄壳不变（线上由平台打包）');
+console.log('✓ 该产物需与源码一起提交（pre-commit 钩子会自动重建）');

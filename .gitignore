@@ -3,4 +3,3 @@ dist/
 .wrangler/
 *.log
 .edgeone/
-.eo-build/
