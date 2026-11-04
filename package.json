@@ -31,7 +31,8 @@
     "@cloudflare/workers-types": "^5.20260927.1",
     "@types/blueimp-md5": "^2.18.2",
     "esbuild": "^0.28.2",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "undici": "^8.12.3"
   },
   "type": "module",
   "engines": {

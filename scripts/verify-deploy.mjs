@@ -14,6 +14,15 @@
  * 阶梯实测的原理：/admin/api/selftest/delay?ms=N 会睡 N 毫秒并回吐真实耗时，
  * 逐级加压直到请求被平台掐断，就能确认「单次请求超时」到底是多少。
  */
+// 大陆网络直连 EdgeOne 预置域名 *.edgeone.dev 会返回 401，
+// 需要挂代理才能验证线上：HTTPS_PROXY=http://127.0.0.1:10808 node scripts/verify-deploy.mjs
+const PROXY = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || '';
+if (PROXY) {
+  const { ProxyAgent, setGlobalDispatcher } = await import('undici');
+  setGlobalDispatcher(new ProxyAgent(PROXY));
+  console.log(`（已启用代理: ${PROXY}）`);
+}
+
 const args = process.argv.slice(2);
 const getArg = (k, d) => {
   const a = args.find((x) => x.startsWith(`--${k}=`));
