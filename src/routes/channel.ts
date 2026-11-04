@@ -4,6 +4,7 @@ import { OrderRow } from '../lib/db';
 import { markOrderPaid, sendMerchantNotifySafe } from '../lib/orderflow';
 import { getPlugin, NotifyCtx } from '../lib/channel';
 import { vmqPush, vmqTask } from '../lib/plugins/vmq';
+import { channelGet, orderByTradeNo } from '../lib/repo';
 
 export const channelRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -11,10 +12,8 @@ export const channelRoutes = new Hono<{ Bindings: Bindings }>();
 channelRoutes.all('/channel/notify/:plugin/:channelId', async (c) => {
   const pluginId = c.req.param('plugin');
   const channelId = parseInt(c.req.param('channelId'), 10);
-  const chRow = await c.env.DB.prepare('SELECT * FROM channels WHERE id=? AND status=1')
-    .bind(channelId)
-    .first<{ id: number; plugin: string; name: string; status: number; config: string; types: string }>();
-  if (!chRow || chRow.plugin !== pluginId) return c.text('fail');
+  const chRow = await channelGet(channelId);
+  if (!chRow || chRow.status !== 1 || chRow.plugin !== pluginId) return c.text('fail');
   const plugin = getPlugin(pluginId);
   if (!plugin?.onNotify) return c.text('fail');
 
@@ -34,9 +33,7 @@ channelRoutes.all('/channel/notify/:plugin/:channelId', async (c) => {
 
   const paid = await markOrderPaid(c.env, r.tradeNo, r.money || 0, r.apiTradeNo || '');
   if (paid) {
-    const order = await c.env.DB.prepare('SELECT * FROM orders WHERE trade_no=?')
-      .bind(r.tradeNo)
-      .first<OrderRow>();
+    const order = await orderByTradeNo(r.tradeNo);
     if (order) c.executionCtx.waitUntil(sendMerchantNotifySafe(c.env, order));
   }
   return c.text(r.respond);

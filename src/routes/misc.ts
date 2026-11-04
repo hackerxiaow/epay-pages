@@ -3,61 +3,50 @@ import { Bindings, hashPassword } from '../lib/auth';
 import { getConfig, getConfigAll, OrderRow } from '../lib/db';
 import { sendMerchantNotifySafe } from '../lib/orderflow';
 import { randomHex, now } from '../lib/util';
+import { cfgSetMany, ensureDefaultGroup, statTotals, statWindow, userCount } from '../lib/repo';
+import { runCron } from '../lib/cron';
 
 export const misc = new Hono<{ Bindings: Bindings }>();
 
 // ---------- 初始化 (仅首次可调用) ----------
 misc.post('/install', async (c) => {
-  const existing = await getConfig(c.env.DB, 'admin_user');
+  const existing = await getConfig('admin_user');
   if (existing) return c.json({ code: -1, msg: '系统已初始化' });
   const { username, password } = await c.req.json<{ username: string; password: string }>();
   if (!username || !password || password.length < 8) return c.json({ code: -1, msg: '用户名/密码(≥8位)不能为空' });
   const syskey = randomHex(32);
   const cronToken = randomHex(16);
-  await c.env.DB.batch([
-    c.env.DB.prepare('INSERT INTO config (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').bind('admin_user', username),
-    c.env.DB.prepare('INSERT INTO config (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').bind('admin_pwd', await hashPassword(password)),
-    c.env.DB.prepare('INSERT INTO config (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').bind('syskey', syskey),
-    c.env.DB.prepare('INSERT INTO config (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').bind('sitename', 'Epay Pages'),
-    c.env.DB.prepare('INSERT INTO config (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').bind('reg_open', '1'),
-    c.env.DB.prepare('INSERT INTO config (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').bind('channel_map', '{}'),
-    c.env.DB.prepare('INSERT INTO config (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').bind('cron_token', cronToken),
-  ]);
+  // 原实现是 D1 batch（一个事务）；Blob 没有事务，用一次读改写写入全部键
+  await cfgSetMany({
+    admin_user: username,
+    admin_pwd: await hashPassword(password),
+    syskey,
+    sitename: 'Epay Pages',
+    reg_open: '1',
+    channel_map: '{}',
+    cron_token: cronToken,
+  });
+  // 建库时的默认分组（原 migrate-v2.sql 的职责）
+  await ensureDefaultGroup();
   return c.json({ code: 0, data: { cron_token: cronToken } });
 });
 
 // ---------- 通知重试 (外部定时触发) ----------
 misc.get('/api/cron', async (c) => {
-  const conf = (await getConfig(c.env.DB, 'cron_token')) || '';
+  const conf = (await getConfig('cron_token')) || '';
   const token = c.req.query('token') || '';
   if (!conf || token !== conf) return c.json({ code: -1, msg: 'token 错误' });
-  const { results } = await c.env.DB.prepare(
-    'SELECT * FROM orders WHERE status>=1 AND notify_status=0 AND notify_url!=\'\' AND notify_count<5 ORDER BY id DESC LIMIT 20'
-  ).all<OrderRow>();
-  let ok = 0;
-  for (const order of results || []) {
-    await sendMerchantNotifySafe(c.env, order);
-    ok++;
-  }
-  // 账单轮询 (支付宝个人码免挂机通道)
-  const { pollAllBills } = await import('../lib/billpoll');
-  const billMatched = await pollAllBills(c.env);
-  // 原生 USDT (TRC20 链上自动扫账)
-  const { pollAllTronOrders } = await import('../lib/tronusdt');
-  const tronMatched = await pollAllTronOrders(c.env);
-  return c.json({ code: 0, data: { retried: ok, bill_matched: billMatched, tron_matched: tronMatched, time: now() } });
+  return c.json({ code: 0, data: await runCron(c.env) });
 });
 
 // ---------- 首页 (现代 Fintech 极简轻奢美学重构) ----------
 misc.get('/', async (c) => {
-  const conf = await getConfigAll(c.env.DB);
+  const conf = await getConfigAll();
   const ts = now() - 86400;
-  const [users, ordersToday, moneyToday, ordersAll] = await Promise.all([
-    c.env.DB.prepare('SELECT COUNT(*) n FROM users').first<{ n: number }>(),
-    c.env.DB.prepare('SELECT COUNT(*) n FROM orders WHERE addtime>=?').bind(ts).first<{ n: number }>(),
-    c.env.DB.prepare('SELECT IFNULL(SUM(money),0) s FROM orders WHERE status>=1 AND addtime>=?').bind(ts).first<{ s: number }>(),
-    c.env.DB.prepare('SELECT COUNT(*) n FROM orders').first<{ n: number }>(),
-  ]);
+  const [users, window, totals] = await Promise.all([userCount(), statWindow(ts), statTotals()]);
+  const ordersToday = { n: window.n };
+  const moneyToday = { s: window.sum };
+  const ordersAll = { n: totals.orders };
   const fmt = (cents: number) => (cents / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const announce = conf.announcement || '';
   const sitename = conf.sitename || 'Epay Pages';
@@ -222,7 +211,7 @@ ${announce ? `<div class="announce-bar"><div class="announce-inner"><svg width="
 <!-- 实时数据 -->
 <div class="section">
   <div class="stats-card">
-    <div class="stat-col"><div class="stat-val">${users?.n || 0}</div><div class="stat-lbl">入驻商户</div></div>
+    <div class="stat-col"><div class="stat-val">${users}</div><div class="stat-lbl">入驻商户</div></div>
     <div class="stat-col"><div class="stat-val">${ordersToday?.n || 0}</div><div class="stat-lbl">今日订单</div></div>
     <div class="stat-col"><div class="stat-val">¥${fmt(moneyToday?.s || 0)}</div><div class="stat-lbl">今日流水</div></div>
     <div class="stat-col"><div class="stat-val">${ordersAll?.n || 0}</div><div class="stat-lbl">累计处理订单</div></div>
@@ -383,7 +372,7 @@ ${announce ? `<div class="announce-bar"><div class="announce-inner"><svg width="
     <a href="/admin.html">管理后台</a>
     <a href="/pay/1">码牌收款</a>
   </div>
-  <p>© ${sitename} · 基于 Cloudflare Pages + D1 构建的新一代去中心化收款网关</p>
+  <p>© ${sitename} · 基于 EdgeOne Pages + Blob 构建的新一代去中心化收款网关</p>
 </footer>
 
 </body></html>`

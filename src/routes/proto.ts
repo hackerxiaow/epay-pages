@@ -6,6 +6,8 @@ import { cents2str, genTradeNo, now, str2cents } from '../lib/util';
 import { getExternalOrigin, getPlugin, parseChannel } from '../lib/channel';
 import { buildReturnUrl, verifyMerchantSign } from '../lib/orderflow';
 import { resolveChannel, isBlacklisted } from '../lib/routing';
+import { orderCreate as createOrderRow, orderByTradeNo, channelGet } from '../lib/repo';
+import { clientIp, clientCountry } from '../lib/net';
 
 export const proto = new Hono<{ Bindings: Bindings }>();
 
@@ -54,20 +56,29 @@ export async function createOrderDirect(
   req: Request,
   o: DirectOrderOpts
 ): Promise<{ ok: boolean; msg: string; tradeNo?: string }> {
-  const user = await getUserByUid(env.DB, o.uid);
+  const user = await getUserByUid(o.uid);
   if (!user || user.status !== 1) return { ok: false, msg: '商户不存在或已被禁用' };
-  const conf = await getConfigAll(env.DB);
+  const conf = await getConfigAll();
   if (conf.cert_force === '1' && user.cert !== 2) return { ok: false, msg: '商户未完成实名认证' };
-  const clientIp = req.headers.get('cf-connecting-ip') || '';
-  if (!o.skipRisk && isBlacklisted(conf.blacklist || '', clientIp)) return { ok: false, msg: '请求被拒绝' };
-  const routed = await resolveChannel(env.DB, o.type, o.money);
+  const ip = clientIp(req);
+  if (!o.skipRisk && isBlacklisted(conf.blacklist || '', ip)) return { ok: false, msg: '请求被拒绝' };
+  const routed = await resolveChannel(o.type, o.money);
   if (!routed.ok) return { ok: false, msg: routed.msg || '无可用通道' };
   const tradeNo = genTradeNo();
-  await env.DB.prepare(
-    'INSERT INTO orders (trade_no, out_trade_no, uid, type, channel, name, money, status, addtime, notify_url, return_url, domain, ip) VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?)'
-  )
-    .bind(tradeNo, o.out_trade_no, o.uid, o.type, routed.channelId!, o.name, o.money, now(), o.notify_url, o.return_url, '', clientIp)
-    .run();
+  await createOrderRow({
+    trade_no: tradeNo,
+    out_trade_no: o.out_trade_no,
+    uid: o.uid,
+    type: o.type,
+    channel: routed.channelId!,
+    name: o.name,
+    money: o.money,
+    addtime: now(),
+    notify_url: o.notify_url,
+    return_url: o.return_url,
+    domain: '',
+    ip,
+  });
   return { ok: true, msg: 'ok', tradeNo };
 }
 
@@ -84,7 +95,7 @@ export async function createOrder(
     return { ok: false, msg: '不支持的签名类型' };
   }
   const uid = parseInt(p.pid, 10);
-  const user = await getUserByUid(env.DB, uid);
+  const user = await getUserByUid(uid);
   if (!user || user.status !== 1) return { ok: false, msg: '商户不存在或已被禁用' };
   if (!(await verifyMerchantSign(user, p as unknown as Record<string, string>, p.sign))) {
     return { ok: false, msg: '签名错误' };
@@ -92,14 +103,14 @@ export async function createOrder(
   const money = str2cents(p.money);
   if (money <= 0) return { ok: false, msg: '金额错误' };
 
-  const conf = await getConfigAll(env.DB);
+  const conf = await getConfigAll();
   // 实名强制
   if (conf.cert_force === '1' && user.cert !== 2) return { ok: false, msg: '商户未完成实名认证' };
   // 客户端 IP 与地区风控
-  const clientIp = req.headers.get('cf-connecting-ip') || '';
-  if (isBlacklisted(conf.blacklist || '', clientIp)) return { ok: false, msg: '请求被拒绝' };
+  const ip = clientIp(req);
+  if (isBlacklisted(conf.blacklist || '', ip)) return { ok: false, msg: '请求被拒绝' };
   const blocked = (conf.block_countries || '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
-  const country = ((req as Request & { cf?: { country?: string } }).cf?.country || '').toUpperCase();
+  const country = clientCountry(req);
   if (blocked.length && country && blocked.includes(country)) return { ok: false, msg: '请求被拒绝' };
   // 域名白名单
   if (conf.auth_domain === '1' && user.domain) {
@@ -109,43 +120,32 @@ export async function createOrder(
     if (!host || !allowed.includes(host)) return { ok: false, msg: '来源域名未授权' };
   }
 
-  const routed = await resolveChannel(env.DB, p.type, money);
+  const routed = await resolveChannel(p.type, money);
   if (!routed.ok) return { ok: false, msg: routed.msg || '无可用通道' };
   const channelId = routed.channelId!;
 
   const tradeNo = genTradeNo();
-  await env.DB.prepare(
-    'INSERT INTO orders (trade_no, out_trade_no, uid, type, channel, name, money, status, addtime, notify_url, return_url, domain, ip) VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?)'
-  )
-    .bind(
-      tradeNo,
-      p.out_trade_no,
-      uid,
-      p.type,
-      channelId,
-      p.name,
-      money,
-      now(),
-      p.notify_url,
-      p.return_url,
-      req.headers.get('referer') ? new URL(req.headers.get('referer')!).hostname : '',
-      req.headers.get('cf-connecting-ip') || ''
-    )
-    .run();
+  await createOrderRow({
+    trade_no: tradeNo,
+    out_trade_no: p.out_trade_no,
+    uid,
+    type: p.type,
+    channel: channelId,
+    name: p.name,
+    money,
+    addtime: now(),
+    notify_url: p.notify_url,
+    return_url: p.return_url,
+    domain: req.headers.get('referer') ? new URL(req.headers.get('referer')!).hostname : '',
+    ip,
+  });
 
   return { ok: true, msg: 'ok', tradeNo };
 }
 
 /** 调渠道插件创建上游订单 */
 async function pluginCreate(env: Bindings, req: Request, order: OrderRow) {
-  const chRow = await env.DB.prepare('SELECT * FROM channels WHERE id=?').bind(order.channel!).first<{
-    id: number;
-    plugin: string;
-    name: string;
-    status: number;
-    config: string;
-    types: string;
-  }>();
+  const chRow = await channelGet(order.channel!);
   if (!chRow) return { ok: false, msg: '渠道不存在' };
   const ch = parseChannel(chRow);
   const plugin = getPlugin(ch.plugin);
@@ -160,7 +160,7 @@ async function pluginCreate(env: Bindings, req: Request, order: OrderRow) {
 }
 
 async function loadOrder(env: Bindings, tradeNo: string): Promise<OrderRow | null> {
-  return await env.DB.prepare('SELECT * FROM orders WHERE trade_no=?').bind(tradeNo).first<OrderRow>();
+  return await orderByTradeNo(tradeNo);
 }
 
 // ---------- submit.php (浏览器提交, 跳转收银台) ----------
@@ -203,12 +203,12 @@ proto.get('/cashier/:tradeNo', async (c) => {
   if (order.status >= 1) return c.redirect(`/payok/${order.trade_no}`);
   const pr = await pluginCreate(c.env, c.req.raw, order);
   if (pr.ok && pr.payUrl) return c.redirect(pr.payUrl);
-  const user = await getUserByUid(c.env.DB, order.uid);
+  const user = await getUserByUid(order.uid);
   const qr = pr.ok ? pr.qrContent || '' : '';
   const name = pr.ok ? '' : (pr.msg || '创建支付失败');
   return c.html(
     cashierPage({
-      siteName: (await getConfig(c.env.DB, 'sitename')) || 'Epay',
+      siteName: (await getConfig('sitename')) || 'Epay',
       tradeNo: order.trade_no,
       orderName: order.name || '商品订单',
       money: (pr.payAmount || cents2str(order.money)),
@@ -274,7 +274,7 @@ proto.all('/api.php', async (c) => {
     } catch {}
   }
   const act = c.req.query('act') || bodyOnce.act || 'order';
-  const conf = await getConfigAll(c.env.DB);
+  const conf = await getConfigAll();
   const syskey = conf.syskey || '';
 
   if (act === 'order') {
@@ -285,7 +285,7 @@ proto.all('/api.php', async (c) => {
     // 两种鉴权: 商户 key 直传 (原版兼容) 或 md5(SYS_KEY.trade_no.SYS_KEY) 签名
     const pid = parseInt(c.req.query('pid') || '0', 10);
     const key = c.req.query('key') || '';
-    const user = await getUserByUid(c.env.DB, order.uid);
+    const user = await getUserByUid(order.uid);
     const authed =
       (user && pid === order.uid && key === user.key) ||
       (syskey !== '' && c.req.query('sign') === md5(syskey + tradeNo + syskey));

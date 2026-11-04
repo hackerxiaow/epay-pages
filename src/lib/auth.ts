@@ -2,9 +2,12 @@ import { md5 } from './sign';
 import { now } from './util';
 
 export interface Bindings {
-  DB: D1Database;
+  /** EdgeOne 环境变量（在项目设置里配置，运行时可读） */
   ADMIN_SECRET?: string;
   SITE_NAME?: string;
+  /** 客户端 IP / 国家码由入口注入，见 edgeone-entry.ts */
+  CLIENT_IP?: string;
+  CLIENT_COUNTRY?: string;
 }
 
 /** PBKDF2-SHA256 口令哈希, 格式 pbkdf2$iter$salt$hash */

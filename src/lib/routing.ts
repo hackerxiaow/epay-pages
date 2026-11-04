@@ -1,4 +1,4 @@
-import { ChannelRow } from './channel';
+import { cfgGet, channelByIds } from './repo';
 
 /**
  * 渠道路由: channel_map[type] 支持
@@ -8,14 +8,12 @@ import { ChannelRow } from './channel';
  * 渠道自身可配置 paymin / paymax (元) 过滤金额
  */
 export async function resolveChannel(
-  db: D1Database,
   payType: string,
   money: number
 ): Promise<{ ok: boolean; channelId?: number; msg?: string }> {
-  const row = await db.prepare("SELECT v FROM config WHERE k='channel_map'").first<{ v: string }>();
-  let map: Record<string, unknown> = {};
+  const raw = await cfgGet('channel_map');  let map: Record<string, unknown> = {};
   try {
-    map = JSON.parse(row?.v || '{}');
+    map = JSON.parse(raw || '{}');
   } catch {}
   const val = map[payType];
   let ids: number[] = [];
@@ -25,11 +23,8 @@ export async function resolveChannel(
     ids = val.split(',').map((s) => parseInt(s.trim(), 10)).filter(Boolean);
   if (!ids.length) return { ok: false, msg: `支付方式 ${payType} 未配置通道` };
 
-  const ph = ids.map(() => '?').join(',');
-  const { results } = await db
-    .prepare(`SELECT * FROM channels WHERE id IN (${ph}) AND status=1`)
-    .bind(...ids)
-    .all<ChannelRow & { weight?: number }>();
+  // 原 SQL: SELECT * FROM channels WHERE id IN (...) AND status=1
+  const results = await channelByIds(ids, true);
 
   const eligible = (results || []).filter((ch) => {
     let cfg: Record<string, string> = {};

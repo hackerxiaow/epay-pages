@@ -283,25 +283,38 @@ async function main() {
   await new Promise((r) => upServer.listen(UPSTREAM_PORT, r));
   await new Promise((r) => mcServer.listen(MERCHANT_PORT, r));
 
-  // ---------- 重置本地 D1 并应用 schema ----------
-  execSync('node scripts/build.mjs', { cwd: process.cwd(), stdio: 'pipe' });
-  execSync('rm -rf .wrangler/state/v3/d1', { cwd: process.cwd() });
-  execSync('npx wrangler d1 execute epay-db --local --file=schema.sql', { cwd: process.cwd(), stdio: 'pipe' });
-  execSync('npx wrangler d1 execute epay-db --local --file=migrate-v2.sql', { cwd: process.cwd(), stdio: 'pipe' });
-
-  // ---------- 启动 wrangler dev ----------
-  console.log('启动 wrangler dev ...');
-  const wr = spawn('npx', ['wrangler', 'pages', 'dev', '--port', '8787', '--ip', '127.0.0.1'], {
-    cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, WRANGLER_SEND_METRICS: 'false' },
-  });
+  // EPAY_SERVER=eo 时跑 EdgeOne 分支（内存存储），否则跑 Cloudflare 分支（D1）
+  const useEo = process.env.EPAY_SERVER === 'eo';
+  let wr;
   let wrLog = '';
-  wr.stdout.on('data', (d) => (wrLog += d));
-  wr.stderr.on('data', (d) => (wrLog += d));
+
+  if (useEo) {
+    // ---------- EdgeOne：构建 dist + cloud-functions，内存存储 ----------
+    execSync('node scripts/eo-build.mjs', { cwd: process.cwd(), stdio: 'pipe' });
+    console.log('启动 EdgeOne 本地模拟 (内存存储) ...');
+    wr = spawn(process.execPath, ['scripts/eo-local.mjs'], {
+      cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PORT: '8787', EPAY_STORE: 'memory' },
+    });
+  } else {
+    // ---------- 重置本地 D1 并应用 schema ----------
+    execSync('node scripts/build.mjs', { cwd: process.cwd(), stdio: 'pipe' });
+    execSync('rm -rf .wrangler/state/v3/d1', { cwd: process.cwd() });
+    execSync('npx wrangler d1 execute epay-db --local --file=schema.sql', { cwd: process.cwd(), stdio: 'pipe' });
+    execSync('npx wrangler d1 execute epay-db --local --file=migrate-v2.sql', { cwd: process.cwd(), stdio: 'pipe' });
+
+    console.log('启动 wrangler dev ...');
+    wr = spawn('npx', ['wrangler', 'pages', 'dev', '--port', '8787', '--ip', '127.0.0.1'], {
+      cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, WRANGLER_SEND_METRICS: 'false' },
+    });
+  }
+  wr.stdout.on('data', (d) => { wrLog += d; if (process.env.EPAY_SERVER_LOG) process.stdout.write(d); });
+  wr.stderr.on('data', (d) => { wrLog += d; if (process.env.EPAY_SERVER_LOG) process.stdout.write(d); });
   const up = await waitFor(async () => {
     try { const r = await fetch(BASE + '/'); return r.status === 200; } catch { return false; }
   }, 60000);
-  if (!up) { console.error('wrangler dev 启动失败:\n' + wrLog.slice(-3000)); wr.kill(); process.exit(1); }
+  if (!up) { console.error('本地服务启动失败:\n' + wrLog.slice(-3000)); wr.kill(); process.exit(1); }
 
   try {
     let adminCookie = '';

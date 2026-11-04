@@ -5,6 +5,17 @@
 （issue #21，请求头 `PHP-Version: 70200` 触发），且代码底子不适合托管资金 —— 本项目按其
 商户接入协议重写，天然免疫该类 PHP 后门。
 
+> **分支说明**
+>
+> | 分支 | 运行时 | 数据层 | 部署 |
+> | --- | --- | --- | --- |
+> | `main` | Cloudflare Workers | D1 | `wrangler pages deploy` |
+> | `edgeone`（当前） | EdgeOne Node.js 云函数 | **EdgeOne Blob** | `edgeone makers deploy` |
+>
+> 两个分支业务代码完全相同（协议、路由、页面、渠道插件、签名算法一行没改），
+> 只有数据访问层、入口与构建方式不同。EdgeOne 部署见 **[docs/edgeone-deploy.md](./docs/edgeone-deploy.md)**。
+> 这个分支上 `npm run dev`（wrangler）与 D1 脚本不可用，`npm test` 默认跑 EdgeOne 模式。
+
 ## 特性
 
 - **协议 100% 兼容**：`submit.php` / `mapi.php` / `api.php` 与彩虹易支付签名规则一致
@@ -47,6 +58,22 @@
 
 ## 部署
 
+### EdgeOne（本分支）
+
+```bash
+npm i
+npm test                          # 168 项断言，先本地跑通
+npm run eo:build                  # -> dist/ + cloud-functions/
+npx edgeone makers generate-routes
+npx edgeone makers deploy -n epay-pages -t "$EDGEONE_TOKEN" -a overseas \
+  --json --skip-ai-gateway-sync
+```
+
+部署后 `POST /install` 初始化（会同时建默认分组），并在项目设置里配置 `CRON_TOKEN`。
+完整步骤、存储设计、读写路径与兼容性问题见 **[docs/edgeone-deploy.md](./docs/edgeone-deploy.md)**。
+
+### Cloudflare（main 分支）
+
 ```bash
 npm i
 node scripts/build.mjs          # esbuild -> dist/_worker.js + _routes.json
@@ -63,10 +90,11 @@ npx wrangler pages deploy dist --project-name epay-pages --branch main
 ## 本地测试
 
 ```bash
-npm test    # wrangler pages dev + mock 上游易支付 + mock 商户端，55 项断言全流程闭环
+npm test        # 本分支：eo-local（静态优先 + 内存存储）+ mock 上游易支付 + mock 商户端
+npm run test:cf # main 分支：wrangler pages dev + 本地 D1
 ```
 
-138 项断言覆盖：协议双签名（MD5/RSA 含负例）、四个渠道全流程（含支付宝 RSA2 响应验签、
+168 项断言覆盖：协议双签名（MD5/RSA 含负例）、渠道全流程（含支付宝 RSA2 响应验签、
 微信 V2 XML 验签、免CK官方账单API、码支付 submit 兼容）、加权轮询、风控、费率/返利、实名、验证码、导出/统计、幂等与回滚。
 
 ## 目录
@@ -74,10 +102,15 @@ npm test    # wrangler pages dev + mock 上游易支付 + mock 商户端，55 �
 ```
 src/
   index.ts          # 入口，插件注册与路由装配
-  lib/              # sign(MD5协议) / auth(HMAC会话) / db(D1+落账) / orderflow(商户通知)
+  edgeone-entry.ts  # EdgeOne 云函数入口（请求物化 / 平台信息注入 / waitUntil 垫片）
+  lib/              # sign(MD5协议) / auth(HMAC会话) / db(落账) / orderflow(商户通知)
+  lib/repo.ts       # 数据层：8 张表 → Blob 文档模型
+  lib/blob-store.ts # EdgeOne Blob 原语（含内存实现）
   lib/plugins/      # epay / vmq / bepusdt / xorpay
   routes/           # proto(协议面) / channel(上游回调+VMQ) / admin / user / misc
 public/             # 原版风格静态页 + 原版 vendor 资源
-schema.sql          # D1 表结构（金额一律存分）
-test/e2e.mjs        # 全流程 e2e
+scripts/            # build.mjs(CF) / eo-build.mjs / eo-local.mjs
+edgeone.json        # EdgeOne 项目配置
+schema.sql          # D1 表结构（金额一律存分，仅 main 分支使用）
+test/e2e.mjs        # 全流程 e2e（两个分支共用）
 ```

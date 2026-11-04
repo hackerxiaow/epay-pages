@@ -40,29 +40,16 @@ app.route('/', features);
 app.route('/', vmqCompat);
 app.route('/', onebot);
 
-// 静态资源回退 (Pages Assets / Worker Assets)
-app.all('*', async (c) => {
-  const assets = (c.env as { ASSETS?: Fetcher }).ASSETS;
-  if (assets) {
-    try {
-      const res = await assets.fetch(c.req.raw);
-      // HTML 文件禁用缓存, 避免用户浏览器和 CDN 缓存旧前端代码
-      const path = c.req.path;
-      if (path.endsWith('.html') || path === '/admin' || path === '/user') {
-        const h = new Headers(res.headers);
-        h.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-        h.set('Pragma', 'no-cache');
-        h.set('Expires', '0');
-        return new Response(res.body, { status: res.status, headers: h });
-      }
-      return res;
-    } catch {}
-  }
-  return c.text('Not Found', 404);
-});
+// 兜底 404
+//
+// Cloudflare 版的静态资源要经过 Worker 转发（`env.ASSETS.fetch`）；
+// EdgeOne 是「静态文件优先于函数」，命中静态文件时函数根本不会被调用，
+// 所以这里只负责没命中任何路由 + 没有同名静态文件的情况。
+// HTML 的 no-cache 由 edgeone.json 的 headers 规则保证，不在这里设置。
+app.all('*', (c) => c.text('Not Found', 404));
 
 export default {
-  async fetch(request: Request, env: Bindings & { ASSETS?: Fetcher }, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Bindings, ctx: ExecutionContext): Promise<Response> {
     return app.fetch(request, env, ctx);
   },
 };

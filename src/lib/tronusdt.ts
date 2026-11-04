@@ -1,7 +1,9 @@
 import { Bindings } from './auth';
 import { markOrderPaid, OrderRow } from './db';
+import { orderByTradeNo } from './repo';
 import { sendMerchantNotifySafe } from './orderflow';
 import { now } from './util';
+import { channelByPlugin, channelGet, orderByApiTradeNo, orderListPending, orderSetExt } from './repo';
 
 export const USDT_TRC20_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 export const DEFAULT_USDT_RATE = 7.3;
@@ -77,13 +79,10 @@ export async function ensureTronUsdtAmount(
     const candidateSun = Math.round(Number(candidate) * 1000000);
 
     // 检查是否有同一渠道的未支付订单占用了相同 SUN 金额
-    const dup = await env.DB.prepare(
-      `SELECT COUNT(*) as n FROM orders WHERE channel=? AND status=0 AND id!=? AND ext LIKE ?`
-    )
-      .bind(order.channel as number, order.id, `%"pay_sun":${candidateSun}%`)
-      .first<{ n: number }>();
+    const pending = await orderListPending({ channelIds: [order.channel as number] });
+    const dup = pending.some((o) => o.id !== order.id && o.pay_sun === candidateSun);
 
-    if (!dup?.n) {
+    if (!dup) {
       chosenUsdt = candidate;
       chosenSun = candidateSun;
       break;
@@ -105,9 +104,7 @@ export async function ensureTronUsdtAmount(
     expire_at: now() + timeoutMin * 60,
   };
 
-  await env.DB.prepare('UPDATE orders SET ext=? WHERE id=?')
-    .bind(JSON.stringify({ ...ext, ...tronExt }), order.id)
-    .run();
+  await orderSetExt(order.trade_no, JSON.stringify({ ...ext, ...tronExt }));
 
   return tronExt;
 }
@@ -209,12 +206,10 @@ export async function pollTronOrder(env: Bindings, order: OrderRow): Promise<boo
   if (lastPoll && current - lastPoll < 5) return false;
 
   ext.last_poll = current;
-  await env.DB.prepare('UPDATE orders SET ext=? WHERE id=?').bind(JSON.stringify(ext), order.id).run();
+  await orderSetExt(order.trade_no, JSON.stringify(ext));
 
   // 取渠道配置 (节点地址/API Key)
-  const ch = await env.DB.prepare('SELECT config FROM channels WHERE id=?')
-    .bind(order.channel)
-    .first<{ config: string }>();
+  const ch = await channelGet(order.channel || 0);
   let cfg: TronChannelConfig = { address: wallet };
   try {
     cfg = JSON.parse(ch?.config || '{}');
@@ -233,15 +228,13 @@ export async function pollTronOrder(env: Bindings, order: OrderRow): Promise<boo
     if (t.timeMs < minTimeMs) continue;
 
     // 检查此 txid 是否已在别的订单入过账 (防止重放攻击)
-    const dup = await env.DB.prepare('SELECT id FROM orders WHERE api_trade_no=?').bind(t.txid).first();
+    const dup = await orderByApiTradeNo(t.txid);
     if (dup) continue;
 
     // 链上确认命中! 标记订单为已支付
     const paid = await markOrderPaid(env, order.trade_no, order.money, t.txid);
     if (paid) {
-      const fullOrder = await env.DB.prepare('SELECT * FROM orders WHERE trade_no=?')
-        .bind(order.trade_no)
-        .first<OrderRow>();
+      const fullOrder = await orderByTradeNo(order.trade_no);
       if (fullOrder) {
         await sendMerchantNotifySafe(env, fullOrder);
       }
@@ -254,13 +247,17 @@ export async function pollTronOrder(env: Bindings, order: OrderRow): Promise<boo
 
 /** 定时任务批量扫链: 检索当前所有未支付的原生 USDT 订单进行链上查账 */
 export async function pollAllTronOrders(env: Bindings): Promise<number> {
-  const { results } = await env.DB.prepare(
-    "SELECT * FROM orders WHERE status=0 AND channel IN (SELECT id FROM channels WHERE plugin='tronusdt' AND status=1) ORDER BY id DESC LIMIT 15"
-  ).all<OrderRow>();
+  const channels = await channelByPlugin('tronusdt', true);
+  if (!channels.length) return 0;
+  const orders = await orderListPending({
+    channelIds: channels.map((c) => c.id),
+    order: 'desc',
+    limit: 15,
+  });
 
   let count = 0;
-  for (const o of results || []) {
-    if (await pollTronOrder(env, o)) count++;
+  for (const o of orders) {
+    if (await pollTronOrder(env, o as unknown as OrderRow)) count++;
   }
   return count;
 }

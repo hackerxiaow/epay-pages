@@ -6,11 +6,33 @@ import { createOrderDirect } from './proto';
 import { listPlugins } from '../lib/channel';
 import { rsaGenerate } from '../lib/rsa';
 import { alipayTransfer } from '../lib/plugins/alipayf2f';
+import {
+  channelByPlugin,
+  groupAll,
+  groupDelete,
+  groupSave,
+  orderSummariesPaid,
+  orderSummariesSince,
+  regCleanup,
+  regDel,
+  regGet,
+  regSet,
+  settleGet,
+  settlePatch,
+  statDailySeries,
+  statTotals,
+  statWindow,
+  userByUid,
+  userCount,
+  userPatch,
+  usersByCert,
+  usersByGid,
+} from '../lib/repo';
 
 export const features = new Hono<{ Bindings: Bindings }>();
 
 async function requireAdmin(env: Bindings, req: Request): Promise<boolean> {
-  const syskey = (await getConfig(env.DB, 'syskey')) || '';
+  const syskey = (await getConfig('syskey')) || '';
   const session = await parseSessionCookie(env, syskey, getCookie(req, 'epay_session'));
   return session?.role === 'admin';
 }
@@ -18,32 +40,27 @@ async function requireAdmin(env: Bindings, req: Request): Promise<boolean> {
 // 公开运营统计 (仅聚合数字, 仿码支付平台首页)
 features.get('/api/stats', async (c) => {
   const ts = now() - 86400;
-  const [users, ordersToday, moneyToday, ordersAll] = await Promise.all([
-    c.env.DB.prepare('SELECT COUNT(*) n FROM users').first<{ n: number }>(),
-    c.env.DB.prepare('SELECT COUNT(*) n FROM orders WHERE addtime>=?').bind(ts).first<{ n: number }>(),
-    c.env.DB.prepare('SELECT IFNULL(SUM(money),0) s FROM orders WHERE status>=1 AND addtime>=?').bind(ts).first<{ s: number }>(),
-    c.env.DB.prepare('SELECT COUNT(*) n FROM orders').first<{ n: number }>(),
-  ]);
+  const [merchants, window, totals] = await Promise.all([userCount(), statWindow(ts), statTotals()]);
   return c.json({
     code: 0,
     data: {
-      merchants: users?.n || 0,
-      orders_today: ordersToday?.n || 0,
-      money_today: (moneyToday?.s || 0) / 100,
-      orders_all: ordersAll?.n || 0,
+      merchants,
+      orders_today: window.n,
+      money_today: window.sum / 100,
+      orders_all: totals.orders,
     },
   });
 });
 
 // 注册配置 (公共, 供前端渲染验证码/邮箱开关)
 features.get('/api/regconfig', async (c) => {
-  const conf = await getConfigAll(c.env.DB);
+  const conf = await getConfigAll();
   return c.json({ code: 0, data: { captcha_open: conf.captcha_open === '1', email_verify: conf.email_verify === '1', reg_open: conf.reg_open === '1' } });
 });
 
 // 平台公告 (公共)
 features.get('/api/announcement', async (c) => {
-  return c.json({ code: 0, data: (await getConfig(c.env.DB, 'announcement')) || '' });
+  return c.json({ code: 0, data: (await getConfig('announcement')) || '' });
 });
 
 // ==================== 图形验证码 ====================
@@ -52,25 +69,25 @@ features.get('/api/captcha', async (c) => {
   const b = Math.floor(Math.random() * 20) + 1;
   const id = randomStr(16);
   const answer = String(a + b);
-  await c.env.DB.prepare('INSERT INTO regcodes (k, v, time) VALUES (?,?,?)').bind(`cap:${id}`, answer, now()).run();
-  await c.env.DB.prepare('DELETE FROM regcodes WHERE time < ?').bind(now() - 600).run();
+  await regSet(`cap:${id}`, answer, now());
+  await regCleanup(now() - 600);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40" viewBox="0 0 120 40"><rect width="120" height="40" fill="#f0f4f8"/><text x="18" y="27" font-size="20" font-family="Georgia" fill="#337ab7" transform="rotate(${Math.random() * 10 - 5} 30 20)">${a} + ${b} = ?</text><line x1="0" y1="${Math.random() * 40}" x2="120" y2="${Math.random() * 40}" stroke="#aac" stroke-width="1"/><line x1="0" y1="${Math.random() * 40}" x2="120" y2="${Math.random() * 40}" stroke="#aac" stroke-width="1"/></svg>`;
   return c.json({ code: 0, data: { id, svg } });
 });
 
 async function verifyCaptcha(env: Bindings, id: string, answer: string): Promise<boolean> {
   if (!id || !answer) return false;
-  const row = await env.DB.prepare('SELECT v FROM regcodes WHERE k=?').bind(`cap:${id}`).first<{ v: string }>();
-  await env.DB.prepare('DELETE FROM regcodes WHERE k=?').bind(`cap:${id}`).run();
+  const row = await regGet(`cap:${id}`);
+  await regDel(`cap:${id}`);
   return !!row && row.v === answer;
 }
 
 // ==================== 码牌收款 (固定商户收款页) ====================
 features.get('/pay/:uid', async (c) => {
   const uid = parseInt(c.req.param('uid'), 10);
-  const user = await getUserByUid(c.env.DB, uid);
+  const user = await getUserByUid(uid);
   if (!user || user.status !== 1) return c.html('<meta charset="utf-8"><body style="text-align:center;padding-top:80px;font-family:sans-serif;color:#ef4444"><h3>当前商户不存在或已被禁用</h3></body>');
-  const conf = await getConfigAll(c.env.DB);
+  const conf = await getConfigAll();
   let types: string[] = [];
   try {
     types = Object.keys(JSON.parse(conf.channel_map || '{}'));
@@ -567,11 +584,7 @@ features.use('/admin/api/*', async (c, next) => {
 features.get('/admin/api/export', async (c) => {
   const days = parseInt(c.req.query('days') || '30', 10);
   const since = now() - days * 86400;
-  const { results } = await c.env.DB.prepare(
-    'SELECT trade_no, out_trade_no, uid, type, name, money, realmoney, status, addtime, endtime FROM orders WHERE addtime>=? ORDER BY id DESC LIMIT 5000'
-  )
-    .bind(since)
-    .all();
+  const results = await orderSummariesSince(since, 5000);
   const head = '平台订单号,商户订单号,商户ID,支付方式,商品名称,订单金额(元),实付(元),状态,下单时间,支付时间';
   const st = ['待支付', '已支付', '已退款', '已完成'];
   const lines = (results || []).map((o: Record<string, unknown>) =>
@@ -589,76 +602,79 @@ features.get('/admin/api/export', async (c) => {
 
 // 支付用户统计
 features.get('/admin/api/buyerstat', async (c) => {
-  const { results } = await c.env.DB.prepare(
-    'SELECT ip, COUNT(*) n, SUM(money) total, MAX(addtime) last FROM orders WHERE status>=1 AND ip!="" GROUP BY ip ORDER BY n DESC LIMIT 100'
-  ).all();
+  // 原 SQL: GROUP BY ip ORDER BY n DESC LIMIT 100（只看已支付且 ip 非空）
+  const paid = await orderSummariesPaid(0);
+  const byIp = new Map<string, { ip: string; n: number; total: number; last: number }>();
+  for (const o of paid) {
+    if (!o.ip) continue;
+    const cur = byIp.get(o.ip) || { ip: o.ip, n: 0, total: 0, last: 0 };
+    cur.n += 1;
+    cur.total += o.money;
+    cur.last = Math.max(cur.last, o.addtime || 0);
+    byIp.set(o.ip, cur);
+  }
+  const results = [...byIp.values()].sort((a, b) => b.n - a.n).slice(0, 100);
   return c.json({ code: 0, data: results });
 });
 
 // 7日趋势
 features.get('/admin/api/trend', async (c) => {
-  const { results } = await c.env.DB.prepare(
-    `SELECT date(addtime, 'unixepoch', '+8 hours') d, COUNT(*) n, SUM(CASE WHEN status>=1 THEN money ELSE 0 END) s
-     FROM orders WHERE addtime>=? GROUP BY d ORDER BY d`
-  )
-    .bind(now() - 7 * 86400)
-    .all();
+  const results = await statDailySeries(7);
   return c.json({ code: 0, data: results });
 });
 
 // 商户分组 (费率)
 features.get('/admin/api/groups', async (c) => {
-  const { results } = await c.env.DB.prepare('SELECT * FROM groups ORDER BY id').all();
-  return c.json({ code: 0, data: results });
+  return c.json({ code: 0, data: await groupAll() });
 });
 features.post('/admin/api/groups', async (c) => {
   const b = await c.req.json<{ id?: number; name: string; rate: number }>();
-  if (b.id) {
-    await c.env.DB.prepare('UPDATE groups SET name=?, rate=? WHERE id=?').bind(b.name, b.rate, b.id).run();
-  } else {
-    await c.env.DB.prepare('INSERT INTO groups (name, rate) VALUES (?,?)').bind(b.name, b.rate).run();
-  }
+  await groupSave({ id: b.id, name: b.name, rate: b.rate });
   return c.json({ code: 0 });
 });
 features.post('/admin/api/groups/delete', async (c) => {
   const { id } = await c.req.json<{ id: number }>();
   if (id === 1) return c.json({ code: -1, msg: '默认分组不可删除' });
-  await c.env.DB.prepare('UPDATE users SET gid=1 WHERE gid=?').bind(id).run();
-  await c.env.DB.prepare('DELETE FROM groups WHERE id=?').bind(id).run();
+  // 原 SQL: UPDATE users SET gid=1 WHERE gid=?
+  for (const uid of await usersByGid(id)) await userPatch(uid, { gid: 1 });
+  await groupDelete(id);
   return c.json({ code: 0 });
 });
 
 // 平台 RSA 密钥对生成
 features.post('/admin/api/rsa/generate', async (c) => {
   const { publicPem, privatePem } = await rsaGenerate();
-  await setConfig(c.env.DB, 'rsa_public', publicPem);
-  await setConfig(c.env.DB, 'rsa_private', privatePem);
+  await setConfig('rsa_public', publicPem);
+  await setConfig('rsa_private', privatePem);
   return c.json({ code: 0, data: { publicPem } });
 });
 features.get('/admin/api/rsa', async (c) => {
-  return c.json({ code: 0, data: { publicPem: (await getConfig(c.env.DB, 'rsa_public')) || '' } });
+  return c.json({ code: 0, data: { publicPem: (await getConfig('rsa_public')) || '' } });
 });
 
 // 实名审核
 features.get('/admin/api/certs', async (c) => {
-  const { results } = await c.env.DB.prepare('SELECT uid, username, cert, cert_name, cert_no FROM users WHERE cert=1 ORDER BY uid').all();
+  const rows = await usersByCert(1);
+  const results = rows.map((u) => ({ uid: u.uid, username: u.username, cert: u.cert || 0, cert_name: u.cert_name || '', cert_no: u.cert_no || '' }));
   return c.json({ code: 0, data: results });
 });
 features.post('/admin/api/certs/review', async (c) => {
   const { uid, status } = await c.req.json<{ uid: number; status: number }>();
-  await c.env.DB.prepare('UPDATE users SET cert=? WHERE uid=?').bind(status, uid).run();
+  await userPatch(uid, { cert: status });
   return c.json({ code: 0 });
 });
 
 // 结算自动打款 (支付宝转账, 需渠道启用 enable_transfer)
 features.post('/admin/api/settles/pay', async (c) => {
   const { id, account, name } = await c.req.json<{ id: number; account: string; name?: string }>();
-  const row = await c.env.DB.prepare('SELECT s.*, u.username FROM settles s LEFT JOIN users u ON u.uid=s.uid WHERE s.id=?').bind(id).first<{ id: number; uid: number; amount: number; status: number; username: string }>();
+  const settle = await settleGet(id);
+  const owner = settle ? await userByUid(settle.uid) : null;
+  const row = settle ? { ...settle, username: owner?.username || '' } : null;
   if (!row) return c.json({ code: -1, msg: '记录不存在' });
   if (row.status !== 0) return c.json({ code: -1, msg: '已处理' });
-  const chRow = await c.env.DB.prepare("SELECT config FROM channels WHERE plugin='alipayf2f' AND status=1").all<{ config: string }>();
+  const chRow = await channelByPlugin('alipayf2f', true);
   let cfgRaw = '';
-  for (const ch of chRow.results || []) {
+  for (const ch of chRow) {
     try {
       const cfg = JSON.parse(ch.config || '{}');
       if (cfg.enable_transfer === '1') {
@@ -670,7 +686,7 @@ features.post('/admin/api/settles/pay', async (c) => {
   if (!cfgRaw) return c.json({ code: -1, msg: '没有启用自动打款的支付宝渠道' });
   const r = await alipayTransfer(cfgRaw, 'ST' + row.id + '_' + now(), cents2str(row.amount), account, name || row.username, '结算打款');
   if (!r.ok) return c.json({ code: -1, msg: '打款失败: ' + r.msg });
-  await c.env.DB.prepare('UPDATE settles SET status=1, note=? WHERE id=?').bind(`支付宝转账单号 ${r.orderNo || ''}`, id).run();
+  await settlePatch(id, { status: 1, note: `支付宝转账单号 ${r.orderNo || ''}` });
   return c.json({ code: 0, msg: '打款成功' });
 });
 

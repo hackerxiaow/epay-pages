@@ -4,6 +4,7 @@ import { now, str2cents } from '../lib/util';
 import { Bindings } from '../lib/auth';
 import { OrderRow } from '../lib/db';
 import { markOrderPaid, sendMerchantNotifySafe } from '../lib/orderflow';
+import { channelByPlugin, orderByTradeNo, orderListPending } from '../lib/repo';
 
 /**
  * 原版 V免签 (szvone/vmqApk) 兼容层 —— 拿原版安卓App直接指向本系统即可使用
@@ -17,9 +18,9 @@ export const vmqCompat = new Hono<{ Bindings: Bindings }>();
 vmqCompat.all('/appHeart', async (c) => {
   const t = c.req.query('t') || '';
   const sign = c.req.query('sign') || '';
-  const { results } = await c.env.DB.prepare("SELECT id, config FROM channels WHERE plugin='vmq' AND status=1").all<{ id: number; config: string }>();
+  const channels = await channelByPlugin('vmq', true);
   let valid = false;
-  for (const ch of results || []) {
+  for (const ch of channels) {
     try {
       const k = JSON.parse(ch.config || '{}').key;
       if (k && md5(t + k) === sign) valid = true;
@@ -32,9 +33,9 @@ vmqCompat.all('/appHeart', async (c) => {
 vmqCompat.all('/getState', async (c) => {
   const t = c.req.query('t') || '';
   const sign = c.req.query('sign') || '';
-  const { results } = await c.env.DB.prepare("SELECT id, config FROM channels WHERE plugin='vmq' AND status=1").all<{ id: number; config: string }>();
+  const channels = await channelByPlugin('vmq', true);
   let valid = false;
-  for (const ch of results || []) {
+  for (const ch of channels) {
     try {
       const k = JSON.parse(ch.config || '{}').key;
       if (k && md5(t + k) === sign) valid = true;
@@ -60,9 +61,9 @@ vmqCompat.all('/appPush', async (c) => {
   // 时钟窗 50 秒 (与原版一致)
   const skew = Math.abs(parseInt(t, 10) - Date.now());
   if (!t || skew > 50 * 1000) return c.json({ code: -1, msg: '客户端时间错误' });
-  const { results } = await c.env.DB.prepare("SELECT id, config FROM channels WHERE plugin='vmq' AND status=1").all<{ id: number; config: string }>();
+  const channels = await channelByPlugin('vmq', true);
   let channelId = 0;
-  for (const ch of results || []) {
+  for (const ch of channels) {
     try {
       const k = JSON.parse(ch.config || '{}').key;
       if (k && md5(`${type}${price}${t}${k}`) === sign) channelId = ch.id;
@@ -75,22 +76,19 @@ vmqCompat.all('/appPush', async (c) => {
   const cents = str2cents(price);
   if (!payType || !cents) return c.json({ code: 1, msg: '成功' });
 
-  const { results: orders } = await c.env.DB.prepare(
-    'SELECT * FROM orders WHERE status=0 AND channel IN (SELECT id FROM channels WHERE plugin=\'vmq\' AND status=1) AND addtime>=? ORDER BY id ASC LIMIT 50'
-  )
-    .bind(now() - 86400)
-    .all<OrderRow>();
-  for (const o of orders || []) {
-    if (o.type !== payType) continue;
-    let expect = o.money;
-    try {
-      const ext = JSON.parse(o.ext || '{}');
-      if (ext.pay_amount) expect = str2cents(String(ext.pay_amount));
-    } catch {}
+  const orders = await orderListPending({
+    type: payType,
+    channelIds: channels.map((ch) => ch.id),
+    from: now() - 86400,
+    order: 'asc',
+    limit: 50,
+  });
+  for (const o of orders) {
+    const expect = o.pay_amount ? str2cents(String(o.pay_amount)) : o.money;
     if (expect !== cents) continue;
     const paid = await markOrderPaid(c.env, o.trade_no, cents, 'VMQAPP' + t);
     if (paid) {
-      const full = await c.env.DB.prepare('SELECT * FROM orders WHERE trade_no=?').bind(o.trade_no).first<OrderRow>();
+      const full = await orderByTradeNo(o.trade_no);
       if (full) c.executionCtx.waitUntil(sendMerchantNotifySafe(c.env, full));
     }
     return c.json({ code: 1, msg: '成功' });

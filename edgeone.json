@@ -1,0 +1,41 @@
+{
+  "name": "epay-pages",
+  "outputDirectory": "./dist",
+  "nodeVersion": "20.18.0",
+  "cloudFunctions": {
+    "maxDuration": 60
+  },
+  "headers": [
+    {
+      "source": "/admin.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+        { "key": "Pragma", "value": "no-cache" }
+      ]
+    },
+    {
+      "source": "/user.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+        { "key": "Pragma", "value": "no-cache" }
+      ]
+    },
+    {
+      "source": "/assets/*",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=604800" }]
+    },
+    {
+      "source": "/paypage/*",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=604800" }]
+    }
+  ],
+  "schedules": [
+    {
+      "name": "epay-cron",
+      "cron": "0 3 * * *",
+      "path": "/api/cron/tick?token=change-me",
+      "method": "GET",
+      "timezone": "Asia/Shanghai"
+    }
+  ]
+}

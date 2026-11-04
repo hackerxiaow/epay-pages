@@ -1,5 +1,6 @@
 import { Bindings } from './auth';
 import { getConfig, getUserByUid, markOrderPaid, OrderRow, UserRow } from './db';
+import { orderBumpNotify } from './repo';
 import { buildSign, buildSignString, md5 } from './sign';
 import { cents2str } from './util';
 import { rsaSign, rsaVerify } from './rsa';
@@ -10,7 +11,7 @@ export { markOrderPaid, buildSign };
 export async function merchantSign(env: Bindings, user: UserRow, params: Record<string, string>): Promise<string> {
   const str = buildSignString(params);
   if (user.keytype === 1 && user.publickey) {
-    const priv = (await getConfig(env.DB, 'rsa_private')) || '';
+    const priv = (await getConfig('rsa_private')) || '';
     if (!priv) throw new Error('平台RSA私钥未配置');
     return await rsaSign(priv, str);
   }
@@ -32,7 +33,7 @@ export async function verifyMerchantSign(
 /** 支付成功后向商户 notify_url 发送异步通知 */
 export async function sendMerchantNotify(env: Bindings, order: OrderRow): Promise<boolean> {
   if (!order.notify_url) return true;
-  const user = await getUserByUid(env.DB, order.uid);
+  const user = await getUserByUid(order.uid);
   if (!user) return false;
   const params: Record<string, string> = {
     pid: String(order.uid),
@@ -51,11 +52,11 @@ export async function sendMerchantNotify(env: Bindings, order: OrderRow): Promis
     const resp = await fetch(order.notify_url + sep + qs, { signal: AbortSignal.timeout(8000) });
     const text = (await resp.text()).trim();
     if (text === 'success') {
-      await env.DB.prepare('UPDATE orders SET notify_status=1 WHERE trade_no=?').bind(order.trade_no).run();
+      await orderBumpNotify(order.trade_no, { notify_status: 1 });
       return true;
     }
   } catch {}
-  await env.DB.prepare('UPDATE orders SET notify_count=notify_count+1 WHERE trade_no=?').bind(order.trade_no).run();
+  await orderBumpNotify(order.trade_no, { notify_count_delta: 1 });
   return false;
 }
 
@@ -68,7 +69,7 @@ export async function sendMerchantNotifySafe(env: Bindings, order: OrderRow): Pr
 /** 构造同步回跳 return_url (带商户签名参数) */
 export async function buildReturnUrl(env: Bindings, order: OrderRow): Promise<string> {
   if (!order.return_url) return '';
-  const user = await getUserByUid(env.DB, order.uid);
+  const user = await getUserByUid(order.uid);
   if (!user) return '';
   const params: Record<string, string> = {
     pid: String(order.uid),

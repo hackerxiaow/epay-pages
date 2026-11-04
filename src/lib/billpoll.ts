@@ -8,6 +8,7 @@ import { now, str2cents } from './util';
 import { ChannelRow } from './channel';
 import { markOrderPaid, sendMerchantNotifySafe } from './orderflow';
 import { alipayRequest } from './plugins/alipayf2f';
+import { cfgGet, cfgSet, channelByPlugins, orderByTradeNo, orderListPending, orderSetExt } from './repo';
 
 export interface BillChannelConfig {
   cookie?: string;
@@ -99,7 +100,11 @@ export function parseBills(text: string): BillEntry[] {
 }
 
 /** 计算唯一尾数支付金额, 写入订单 ext */
-export async function ensurePayAmount(env: Bindings, order: { id: number; channel: number | null; money: number; ext: string }, suffixOn: boolean): Promise<string> {
+export async function ensurePayAmount(
+  env: Bindings,
+  order: { id: number; trade_no: string; channel: number | null; money: number; ext: string },
+  suffixOn: boolean
+): Promise<string> {
   let ext: Record<string, unknown> = {};
   try {
     ext = JSON.parse(order.ext || '{}');
@@ -109,14 +114,12 @@ export async function ensurePayAmount(env: Bindings, order: { id: number; channe
   for (let i = 0; i < 60; i++) {
     const suffix = Math.floor(Math.random() * 99) + 1;
     const pay = (order.money / 100 + suffix / 100).toFixed(2);
-    const dup = await env.DB.prepare(
-      `SELECT COUNT(*) n FROM orders WHERE channel=? AND status=0 AND id!=? AND ext LIKE ?`
-    )
-      .bind(order.channel as number, order.id, `%"pay_amount":"${pay}"%`)
-      .first<{ n: number }>();
-    if (!dup?.n) {
+    // 原 SQL: WHERE channel=? AND status=0 AND id!=? AND ext LIKE '%"pay_amount":"X"%'
+    const pending = await orderListPending({ channelIds: [order.channel as number] });
+    const dup = pending.some((o) => o.id !== order.id && o.pay_amount === pay);
+    if (!dup) {
       ext.pay_amount = pay;
-      await env.DB.prepare('UPDATE orders SET ext=? WHERE id=?').bind(JSON.stringify(ext), order.id).run();
+      await orderSetExt(order.trade_no, JSON.stringify(ext));
       return pay;
     }
   }
@@ -167,7 +170,7 @@ export async function pollBillChannel(env: Bindings, ch: ChannelRow): Promise<nu
 
   let seen: string[] = [];
   try {
-    seen = JSON.parse((await getConfig(env.DB, `bill_seen_${ch.id}`)) || '[]');
+    seen = JSON.parse((await cfgGet(`bill_seen_${ch.id}`)) || '[]');
   } catch {}
   const seenSet = new Set(seen);
   let matched = 0;
@@ -178,44 +181,40 @@ export async function pollBillChannel(env: Bindings, ch: ChannelRow): Promise<nu
       seenSet.add(b.id);
       continue;
     }
-    const { results } = await env.DB.prepare(
-      'SELECT * FROM orders WHERE channel=? AND status=0 AND addtime<=? AND addtime>=? ORDER BY id ASC LIMIT 20'
-    )
-      .bind(ch.id, b.time, b.time - 86400)
-      .all<{ id: number; trade_no: string; money: number; status: number; channel: number; ext: string }>();
-    for (const o of results || []) {
-      let ext: Record<string, unknown> = {};
-      try {
-        ext = JSON.parse(o.ext || '{}');
-      } catch {}
-      const pay = ext.pay_amount ? str2cents(String(ext.pay_amount)) : o.money;
+    const orders = await orderListPending({
+      channelIds: [ch.id],
+      to: b.time,
+      from: b.time - 86400,
+      order: 'asc',
+      limit: 20,
+    });
+    for (const o of orders) {
+      const pay = o.pay_amount ? str2cents(String(o.pay_amount)) : o.money;
       if (pay !== b.amount) continue;
       const paid = await markOrderPaid(env, o.trade_no, b.amount, 'BILL' + b.id);
       if (paid) {
         matched++;
-        const full = await env.DB.prepare('SELECT * FROM orders WHERE trade_no=?').bind(o.trade_no).first<{ trade_no: string; uid: number; notify_url: string; out_trade_no: string; type: string; name: string; money: number }>();
-        if (full) await sendMerchantNotifySafe(env, full as never);
+        const full = await orderByTradeNo(o.trade_no);
+        if (full) await sendMerchantNotifySafe(env, full);
       }
       seenSet.add(b.id);
       break;
     }
   }
   if (seenSet.size !== seen.length) {
-    await setConfig(env.DB, `bill_seen_${ch.id}`, JSON.stringify(Array.from(seenSet).slice(-300)));
+    await cfgSet(`bill_seen_${ch.id}`, JSON.stringify(Array.from(seenSet).slice(-300)));
   }
   return matched;
 }
 
 /** 节流全渠道轮询 (10s), 由收银台懒轮询/外部cron驱动 */
 export async function pollAllBills(env: Bindings): Promise<number> {
-  const last = await env.DB.prepare("SELECT v FROM config WHERE k='bill_last_poll'").first<{ v: string }>();
-  if (last && parseInt(last.v, 10) > now() - 10) return -1;
-  await setConfig(env.DB, 'bill_last_poll', String(now()));
-  const { results } = await env.DB.prepare(
-    "SELECT * FROM channels WHERE plugin IN ('alipaybill','qqbill') AND status=1"
-  ).all<ChannelRow>();
+  const last = await cfgGet('bill_last_poll');
+  if (last && parseInt(last, 10) > now() - 10) return -1;
+  await cfgSet('bill_last_poll', String(now()));
+  const channels = await channelByPlugins(['alipaybill', 'qqbill'], true);
   let total = 0;
-  for (const ch of results || []) {
+  for (const ch of channels) {
     total += await pollBillChannel(env, ch);
   }
   return total;

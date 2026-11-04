@@ -3,6 +3,7 @@ import { Bindings } from '../lib/auth';
 import { getConfig, OrderRow } from '../lib/db';
 import { now, str2cents } from '../lib/util';
 import { markOrderPaid, sendMerchantNotifySafe } from '../lib/orderflow';
+import { orderByTradeNo, orderListPending } from '../lib/repo';
 
 /**
  * OneBot v11 HTTP 上报端点 —— QQ协议端(NapCat/LLOneBot/go-cqhttp) 直接对接
@@ -24,7 +25,7 @@ function extractAmounts(text: string): number[] {
 
 onebot.post('/onebot/report', async (c) => {
   const token = c.req.query('token') || '';
-  const confToken = (await getConfig(c.env.DB, 'onebot_token')) || '';
+  const confToken = (await getConfig('onebot_token')) || '';
   if (!confToken || token !== confToken) return c.json({ status: 'forbidden' }, 403);
   const ev = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   // OneBot v11: post_type=message/private 或 notice; 文本在 raw_message / message
@@ -41,21 +42,18 @@ onebot.post('/onebot/report', async (c) => {
   const amounts = extractAmounts(text);
   if (!amounts.length) return c.json({ status: 'ignored' });
 
-  const { results } = await c.env.DB.prepare(
-    "SELECT * FROM orders WHERE status=0 AND type='qqpay' AND addtime>=? ORDER BY id ASC LIMIT 50"
-  )
-    .bind(now() - 86400)
-    .all<OrderRow>();
-  for (const o of results || []) {
-    let expect = o.money;
-    try {
-      const ext = JSON.parse(o.ext || '{}');
-      if (ext.pay_amount) expect = str2cents(String(ext.pay_amount));
-    } catch {}
+  const orders = await orderListPending({
+    type: 'qqpay',
+    from: now() - 86400,
+    order: 'asc',
+    limit: 50,
+  });
+  for (const o of orders) {
+    const expect = o.pay_amount ? str2cents(String(o.pay_amount)) : o.money;
     if (!amounts.includes(expect)) continue;
     const paid = await markOrderPaid(c.env, o.trade_no, expect, 'ONEBOT' + now());
     if (paid) {
-      const full = await c.env.DB.prepare('SELECT * FROM orders WHERE trade_no=?').bind(o.trade_no).first<OrderRow>();
+      const full = await orderByTradeNo(o.trade_no);
       if (full) c.executionCtx.waitUntil(sendMerchantNotifySafe(c.env, full));
     }
     return c.json({ status: 'ok' });
